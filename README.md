@@ -1,4 +1,4 @@
-# dynamic-follow-tf
+# dynamic-follow-tf-v2
 
 Just a testing ground for experimenting with TensorFlow and applying it to a longitudinal control system for openpilot (but v2!)
 

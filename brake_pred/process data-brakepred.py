@@ -8,46 +8,76 @@ import pickle
 import csv
 import time
 
-os.chdir("C:/Git/dynamic-follow-tf-v2/data")
-data_dir = "D:/Resilio Sync/dfv2"
-driving_data = []
+os.chdir("C:\Git\dynamic-follow-tf-v2\data")
+'''with open("traffic-highway/df-data", "r") as f:
+    d_data = f.read().split("\n")'''
 
+data_dir = "D:\Resilio Sync\df"
+driving_data = []
+gm_counter = 0
+other_counter = 0
+
+CHEVY = False
+REMOVE_COAST_CHEVY = False
+
+HONDA = False
+HOLDEN = True
+MINSIZE = 40000 #kb #40000
 print("Loading data...")
 for folder in os.listdir(data_dir):
-    for filename in os.listdir(os.path.join(data_dir, folder)):
-        print(os.path.join(os.path.join(data_dir, folder), filename))
-        with open(os.path.join(os.path.join(data_dir, folder), filename), 'r') as f:
-            data = [ast.literal_eval(line) for line in f.read().split('\n') if line != '']  # load and parse data to list of dicts
-            
-        gas_list = [line['gas'] for line in data]
-        min_gas = min(gas_list)
-        max_gas = max(gas_list)
-        
-        for line in data:  # map gas values to appropriate 0 to 1 range and append to driving_data
-            new_gas = (line['gas'] - min_gas) / max_gas
-            new_gas = new_gas if new_gas > 0.005 else 0  # if gas is less than half a percent, assume 0
-            #new_brake = line['brake'] if line['brake'] > 600 else 0  # if brake pressure less than 600 assume no brake
-            #new_brake = 0.0 if new_gas > 0 else line['brake'] / 4047.0  # if gas, assume no brake
+    if HOLDEN and any([sup_car in folder for sup_car in ["HOLDEN ASTRA RS-V BK 2017"]]):
+        for filename in os.listdir(os.path.join(data_dir, folder)):
+            print(filename)
+            file_size = os.path.getsize(os.path.join(os.path.join(data_dir, folder), filename))
+            if file_size > MINSIZE: #if bigger than 40kb
+                #print(os.path.join(os.path.join(data_dir, folder), filename))
+                with open(os.path.join(os.path.join(data_dir, folder), filename), "r") as f:
+                    df = [i for i in f.read().split("\n") if i != '']
+                
+                #df = [i for i in df if -1 <= (i[-3] - i[-2]) <= 1]
+                
+                for line in df:
+                    try:
+                        line = json.loads(line)
+                    except:
+                        continue
+                    
+                    driving_data.append(line)
+                    gm_counter += 1 
 
-            line.update({'gas': new_gas})
-            #line.update({'brake': new_brake})
-            driving_data.append(line)
+x = range(len(driving_data))
+#y = [i[-3] - i[-2] for i in driving_data]
+y2 = [i[0] for i in driving_data]
+plt.clf()
+#plt.plot(x, y)
+plt.plot(x, y2)
+plt.show()
 
 print("Total samples: {}".format(len(driving_data)))
-y_train = [[line['gas'], line['brake']] for line in driving_data]
+y_train = [i[-3] - i[-2] for i in driving_data] # since some samples have a_rel, get gas and brake from end of list
+print("Gas samples: {}".format(len([i for i in y_train if i > 0])))
+print("Coast samples: {}".format(len([i for i in y_train if i == 0])))
+print("Brake samples: {}".format(len([i for i in y_train if i < 0])))
+print("\nSamples from GM: {}, samples from other cars: {}".format(gm_counter, other_counter))
 
+average_y = [i for i in y_train]
+average_y = sum(average_y) / len(average_y)
+print('Average of samples: {}'.format(average_y))
 
 save_data = True
 if save_data:
     print("Saving data...")
     save_dir="brake_pred"
-    x_train = [{key: line[key] for key in line if key not in ['gas', 'brake']} for line in data]  # remove gas/brake from x_train
+    x_train = [[i[0], i[1]] for i in driving_data] # include a_rel
+    #x_train = [i[:2] + [i[2] - i[0]] + i[-2:] for i in x_train] # makes index 2 be relative velocity
     with open(save_dir+"/x_train", "wb") as f:
-        pickle.dump(x_train, f)
+        pickle.dump(np.array(x_train), f)
     with open(save_dir+"/y_train", "wb") as f:
-        pickle.dump(y_train, f)
-    try:
-        os.remove(save_dir+"/normalized")
-    except:
-        pass
+        pickle.dump(np.array(y_train), f)
     print("Saved data!")
+
+'''driving_data = [i for idx, i in enumerate(driving_data) if 20000 < idx < 29000]
+x = [i for i in range(len(driving_data))]
+y = [i[0] for i in driving_data]
+plt.plot(x, y)
+plt.show()'''

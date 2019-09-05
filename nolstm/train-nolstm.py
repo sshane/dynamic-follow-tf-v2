@@ -61,6 +61,7 @@ print("Normalizing data...")  # normalizes track dicts into [yRel, dRel, vRel tr
 # get relevant training car data to normalize
 car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['left_blinker'], line['right_blinker']] for line in x_train]
 tracks_normalized, car_data_normalized, scales = normX(tracks, car_data)  # normalizes data and adds blinkers
+scales['max_tracks'] = max_tracks
 
 #Format data
 print("Sorting tracks...")
@@ -173,4 +174,4 @@ def save_model():
         converter = tf.lite.TFLiteConverter.from_keras_model_file("models/h5_models/"+model_name+".h5")
         tflite_model = converter.convert()
         open("models/lite_models/"+model_name+".tflite", "wb").write(tflite_model)
-save_model()
+#save_model()

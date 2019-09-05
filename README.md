@@ -1,8 +1,5 @@
 # dynamic-follow-tf-v2
 
-
-![Test](https://i.imgur.com/xUS8naL.gif)
-
 Just a testing ground for experimenting with TensorFlow and applying it to a longitudinal control system for openpilot (but v2!)
 
 This version includes predicting the brake position based off a Keras model that was trained on data from the Holden Astra with a hyper-accurate brake sensor data (something my Corolla lacks). Where previously I was just subtracting from the output in openpilot to get fake-braking, now all brake samples are based off `v_ego` and `a_ego`.
@@ -19,3 +16,5 @@ Some cases where the model could demonstrate superior performance in the real wo
 
 - Since most radars can bounce under the lead vehicle to get the car ahead of the lead (and even more than one object), the model can know when traffic ahead of the lead is starting to slow and immedately start making a larger following distance.
 - Say you're on the highway following a car at your desired speed with a safe distance. A car in the adjacent lane (significantly slower than you) starts to change into you. With up to the 16 radar points the model can see at any one time, it always knows the relative speed and relative distance longitudinally (and laterally) of each car ahead of you. It can can then decide to brake, or take no action if it poses no threat (far enough away or a higher relative velocity).
+
++<img src="left_turn.gif?raw=true" width="800">

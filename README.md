@@ -1,5 +1,8 @@
 # dynamic-follow-tf-v2
 
+
+![Test](https://i.imgur.com/xUS8naL.gif)
+
 Just a testing ground for experimenting with TensorFlow and applying it to a longitudinal control system for openpilot (but v2!)
 
 This version includes predicting the brake position based off a Keras model that was trained on data from the Holden Astra with a hyper-accurate brake sensor data (something my Corolla lacks). Where previously I was just subtracting from the output in openpilot to get fake-braking, now all brake samples are based off `v_ego` and `a_ego`.

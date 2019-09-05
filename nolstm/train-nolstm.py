@@ -164,9 +164,8 @@ for idx, i in enumerate(x_train):
 
 print("Train accuracy: {}".format(1 - sum(preds) / len(preds)))'''
 
-save_model = False
 tf_lite = False
-if save_model:
+def save_model():
     model.save("models/h5_models/"+model_name+".h5")
     print("Saved model!")
     if tf_lite:
@@ -174,3 +173,4 @@ if save_model:
         converter = tf.lite.TFLiteConverter.from_keras_model_file("models/h5_models/"+model_name+".h5")
         tflite_model = converter.convert()
         open("models/lite_models/"+model_name+".tflite", "wb").write(tflite_model)
+save_model()

@@ -37,4 +37,4 @@ def get_scales():
 
 def get_brake_pred_model():
     scales = get_scales()
-    return load_model('models/h5_models/brake_predv2.h5'), scales
+    return load_model('models/h5_models/brake_pred.h5'), scales

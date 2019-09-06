@@ -36,7 +36,7 @@ plt.show()'''
 
 #y=[(i['gas'] - 3.8076250553131104) / 262.3935546875 for i in data]
 #y = [i if i > 0.005  else 0 for i in y]
-x = range(len(data))
+'''x = range(len(data))
 #pedal_gas = [0 if i['gas'] < 4.88 else i['gas'] for i in data]
 pedal_gas = [i['gas'] for i in data]
 car_gas = [i['car_gas'] for i in data]
@@ -60,9 +60,9 @@ plt.plot(x, car_gas, label='car gas')
 plt.plot(x, brake, label='brake')
 #plt.plot(x, y2, label='steer_angle')
 plt.legend()
-plt.show()
+plt.show()'''
 
-'''print(len(data))
+print(len(data))
 #track_yRel = [[x['yRel'] for x in i['live_tracks']['tracks']] for i in data]
 track_data = [i['live_tracks']['tracks'] for i in data][14500:]
 data = data[14500:]
@@ -110,4 +110,4 @@ for count, i in enumerate(track_data):
     plt.pause(0.02)
     if not showed:
         showed = True
-        plt.show()'''
+        plt.show()

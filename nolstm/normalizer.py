@@ -10,11 +10,9 @@ def normX(samples, car_data):
     yRel = functools.reduce(operator.iconcat, [[track['yRel'] for track in line] for line in samples], [])
     dRel = functools.reduce(operator.iconcat, [[track['dRel'] for track in line] for line in samples], [])
     vRel = functools.reduce(operator.iconcat, [[track['vRel'] for track in line] for line in samples], [])
-    aRel = functools.reduce(operator.iconcat, [[track['aRel'] for track in line] for line in samples], [])
     scales = {'yRel': [min(yRel), max(yRel)],
               'dRel': [min(dRel), max(dRel)],
-              'vRel': [min(vRel), max(vRel)],
-              'aRel': [min(aRel), max(aRel)]}
+              'vRel': [min(vRel), max(vRel)]}
     
     # normalize tracks
     tracks_normalized = []
@@ -24,7 +22,6 @@ def normX(samples, car_data):
             tracks_normalized[idx].append([interp_fast(track['yRel'], scales['yRel']),
                                            interp_fast(track['dRel'], scales['dRel']),
                                            interp_fast(track['vRel'], scales['vRel']),
-                                           interp_fast(track['aRel'], scales['aRel']),
                                            1])  # 1 means it's a real track, 0 for padded empty data
     # normalize car data
     car_data = np.array(car_data)

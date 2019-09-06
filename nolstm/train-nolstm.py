@@ -27,7 +27,7 @@ def pad_tracks(tracks, max_tracks):
     to_add = max_tracks - len(tracks)
     to_add_left = to_add - (to_add // 2)
     to_add_right = to_add - to_add_left
-    to_pad = [[0, 0, 0, 0, 0]]
+    to_pad = [[0, 0, 0, 0]]
     
     return (to_pad * to_add_left) + tracks + (to_pad * to_add_right)
 
@@ -51,8 +51,9 @@ for idx, i in enumerate(x_train):  # use brake model to predict what the brake v
     if y_train[idx] < 0.0:  # if brake sample
         to_pred = [interp_fast(i['v_ego'], brake_scales['v_ego_scale']), interp_fast(i['a_ego'], brake_scales['a_ego_scale'])]
         predicted_brake = interp_fast(brake_model.predict([[to_pred]])[0][0], [0, 1], [-1, 1])
-        predicted_brake = predicted_brake if predicted_brake <= 0.0 else 0.0 # if prediction is to accel, default to coast
-        y_train[idx] = predicted_brake
+        if predicted_brake <= 0.0: # if prediction is to accel, default to coast
+            y_train[idx] = predicted_brake
+        
 
 max_tracks = max([len(i['live_tracks']['tracks']) for i in x_train])  # max number of tracks in all samples
 tracks = [line['live_tracks']['tracks'] for line in x_train] # only tracks
@@ -99,15 +100,16 @@ plt.show()'''
 
 #y_train = np.array([np.interp(i, [-1, 1], [0, 1]) for i in y_train])
 
-x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.05)
+x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.1)
+print(x_train.shape)
 
 try:
     os.mkdir("models/h5_models/{}".format(model_name))
 except:
     pass
 
-opt = keras.optimizers.Adam(lr=0.001, decay=5e-6)
-#opt = keras.optimizers.Adadelta(lr=.000375)
+#opt = keras.optimizers.Adam(lr=0.01, decay=1.75e-4)
+opt = keras.optimizers.Adadelta() #lr=.000375)
 #opt = keras.optimizers.SGD(lr=0.008, momentum=0.9)
 #opt = keras.optimizers.RMSprop(lr=0.00005)#, decay=1e-5)
 #opt = keras.optimizers.Adagrad(lr=0.00025)
@@ -130,8 +132,8 @@ model.add(Dense(1, activation='linear'))
     
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=32, epochs=200, validation_data=(x_test, y_test))
-#model = load_model("models/h5_models/"+model_name+".h5")
+model.fit(x_train, y_train, shuffle=True, batch_size=64, epochs=300, validation_data=(x_test, y_test))
+#model = load_model("models/h5_models/{}.h5".format(model_name))
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5
 

@@ -18,7 +18,7 @@ driving_data = []
 print("Loading data...")
 for folder in os.listdir(data_dir):
     for filename in os.listdir(os.path.join(data_dir, folder)):
-        if 'old' not in filename and '.txt' not in filename:
+        if 'old' not in filename and '.txt' not in filename and filename == 'df-data.12':
             filepath = os.path.join(os.path.join(data_dir, folder), filename)
             print('Processing: {}'.format(filepath))
             with open(filepath, 'r') as f:

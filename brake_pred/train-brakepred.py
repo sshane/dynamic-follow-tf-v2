@@ -46,6 +46,8 @@ print("Normalizing data...")
 x_train, scales = normX(x_train)
 x_train = np.array(x_train)
 y_train = np.array([interp_fast(i, [-1, 1]) for i in y_train])
+with open("data/{}/scales".format(data_dir), "wb") as f:
+    pickle.dump(scales, f)
 
 #x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.1)
 
@@ -73,7 +75,8 @@ model.add(Dense(1, activation='linear'))
     
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=128, epochs=10, validation_split=0.1)
+model.fit(x_train, y_train, shuffle=True, batch_size=128, epochs=10, validation_split=0.4)
+#model = load_model("models/h5_models/{}.h5".format(model_name))
 
 #x_train_all = x_train_all[20000:25000]
 #y_train_all = y_train_all[20000:25000]
@@ -91,6 +94,42 @@ plt.show()
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5
 '''
+
+
+'''x = [50-i for i in range(50)]
+y = [interp_fast(model.predict([[[interp_fast(i, scales['v_ego_scale']), interp_fast(-2, scales['a_ego_scale'])]]])[0][0], [0, 1], [-1, 1]) for i in x]
+plt.plot(x, y)
+plt.show()'''
+
+x = range(50)
+y = []
+y_true = []
+while len(y) != 50:
+    c = random.randrange(len(x_train))
+    if y_train[c] < 0.4:
+        y.append(model.predict([[x_train[c]]])[0][0])
+        y_true.append(y_train[c])
+plt.plot(x,y, label='pred')
+plt.plot(x,y_true, label='ground')
+plt.title('train data')
+plt.legend()
+plt.show()
+
+x = range(50)
+y = []
+y_true = []
+while len(y) != 50:
+    c = random.randrange(len(x_train_nobrake))
+    if y_train_nobrake[c] > 0.0:
+        to_pred = [interp_fast(x_train_nobrake[c]['v_ego'], scales['v_ego_scale'], [0, 1]), interp_fast(x_train_nobrake[c]['a_ego'], scales['a_ego_scale'], [0, 1])]
+        y.append(model.predict([[to_pred]])[0][0])
+        y_true.append(interp_fast(y_train_nobrake[c], [-1, 1], [0, 1]))
+plt.plot(x,y, label='pred')
+plt.plot(x,y_true, label='ground')
+plt.title('live tracks data')
+plt.legend()
+plt.show()
+
 preds = []
 for idx, i in enumerate(x_train[:10000]):
     preds.append(abs(model.predict([[i]])[0][0] - y_train[idx]))
@@ -110,7 +149,7 @@ for i in range(20):
     print()
 
 
-showed = 0
+'''showed = 0
 while showed <= 20:
     c = random.randint(0, len(x_train_nobrake))
     if x_train_nobrake[c]['v_ego'] > 8.9 and y_train_nobrake[c] >= 0.0:
@@ -118,10 +157,10 @@ while showed <= 20:
         print('Ground truth: {}'.format(y_train_nobrake[c]))
         to_pred = [interp_fast(x_train_nobrake[c]['v_ego'], scales['v_ego_scale'], [0, 1]), interp_fast(x_train_nobrake[c]['a_ego'], scales['a_ego_scale'], [0, 1])]
         print('Prediction: {}'.format(interp_fast(model.predict([[to_pred]])[0][0], [0, 1], [-1, 1])))
-        print()
+        print()'''
 
 
-save_model = True
+save_model = False
 tf_lite = False
 if save_model:
     model.save("models/h5_models/"+model_name+".h5")

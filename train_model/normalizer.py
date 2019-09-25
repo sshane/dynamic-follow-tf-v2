@@ -30,10 +30,9 @@ def normX(samples, car_data):
     scales['steer_angle'] = [mins[1], maxs[1]]
     scales['steer_rate'] = [mins[2], maxs[2]]
     scales['a_lead'] = [mins[3], maxs[3]]
-    scales['set_speed'] = [mins[4], maxs[4]]
     car_data_normalized = []
     for i in car_data:
-        if i[7] == 0:
+        if i[6] == 0:
             i[3] = 0.0
         else:
             i[3] = interp_fast(i[3], scales['a_lead'])
@@ -41,8 +40,7 @@ def normX(samples, car_data):
         interp_fast(i[1], scales['steer_angle']),
         interp_fast(i[2], scales['steer_rate']),
         i[3],
-        interp_fast(i[4], scales['set_speed']),
-        int(i[5]), int(i[6])])  # adds blinkers
+        int(i[4]), int(i[5])])  # adds blinkers
 
     return tracks_normalized, car_data_normalized, scales
 

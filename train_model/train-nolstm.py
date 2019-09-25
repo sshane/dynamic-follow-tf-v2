@@ -23,7 +23,7 @@ import load_brake_pred_model as lbpm
 
 def interp_fast(x, xp, fp=[0, 1], ext=False):  # extrapolates above range when ext is True
     interped = (((x - xp[0]) * (fp[1] - fp[0])) / (xp[1] - xp[0])) + fp[0]
-    return interped if ext else min(max(fp[0], interped), fp[1])
+    return interped if ext else min(max(min(fp), interped), max(fp))
 
 brake_model, brake_scales = lbpm.get_brake_pred_model()
 
@@ -63,28 +63,39 @@ else:
         x_train = pickle.load(f)
     with open("data/{}/y_train".format(data_dir), "rb") as f:
         y_train = pickle.load(f)
+    print(''+5)
     
-    max_tracks = max([len(i['live_tracks']['tracks']) for i in x_train])  # max number of tracks in all samples
-    tracks = [line['live_tracks']['tracks'] for line in x_train] # only tracks
+    #tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
+    tracks = [line['live_tracks']['tracks'] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
+    max_tracks = max([len(i) for i in tracks])  # max number of tracks in all samples
     
     # get relevant training car data to normalize
-    car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['set_speed'], line['left_blinker'], line['right_blinker'], line['status']] for line in x_train]
+    car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status']] for line in x_train]
     
     print("Normalizing data...", flush=True)  # normalizes track dicts into [yRel, dRel, vRel trackStatus (0/1)] lists for training
     tracks_normalized, car_data_normalized, scales = normX(tracks, car_data)  # normalizes data and adds blinkers
     scales['max_tracks'] = max_tracks
     
     print("Predicting brake data...", flush=True)
-    for idx, i in enumerate(x_train):  # use brake model to predict what the brake value is from vego and aego, above 2 mph
+    pos_preds = 0
+    neg_preds = 0
+    brake_preds = []
+    for idx, i in enumerate(x_train):  # use brake model to predict what the brake value is from v_ego and a_ego
         if y_train[idx] < 0.0:  # if brake sample
             to_pred = [interp_fast(i['v_ego'], brake_scales['v_ego_scale']), interp_fast(i['a_ego'], brake_scales['a_ego_scale'])]
             predicted_brake = interp_fast(brake_model.predict([[to_pred]])[0][0], [0, 1], [-1, 1])
-            if predicted_brake <= 0.0: # if prediction is to accel, default to coast (might want to choose arbitrary brake value)
-                y_train[idx] = (predicted_brake - 0.02) * 1.05  # increase predicted brake to add weight
+            if predicted_brake < 0.0: # if prediction is to accel, default to coast (might want to choose arbitrary brake value)
+                neg_preds += 1
+                brake_preds.append(predicted_brake)
+                y_train[idx] = predicted_brake #(predicted_brake - 0.02) * 1.05  # increase predicted brake to add weight
             else:
-                y_train[idx] = -0.1
+                pos_preds += 1
+                y_train[idx] = 0.0
     
-    y_train = np.array([interp_fast(i, [-1, 1]) for i in y_train])
+    print('Of {} predictions, {} were incorrectly positive while {} were correctly negative.'.format(pos_preds + neg_preds, pos_preds, neg_preds))
+    print('The average brake prediction was {}, max {} and min {}'.format(sum(brake_preds) / len(brake_preds), min(brake_preds), max(brake_preds)))
+    
+    y_train = np.array([interp_fast(i, [-1, 1], [0, 1]) for i in y_train])
     
     with open("data/{}/x_train_normalized".format(data_dir), "wb") as f:
         pickle.dump([tracks_normalized, car_data_normalized, scales], f)
@@ -111,6 +122,19 @@ x_train = np.array([i[0] + i[1] for i in zip(car_data_normalized, flat_tracks)])
 x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.05)
 print(x_train.shape)
 
+'''plt.clf()
+secx = x_train[20000:20000+200]
+secy = y_train[20000:20000+200]
+x = range(len(secx))
+y = [i['a_ego'] for i in secx]
+y2 = secy
+y3 = [i['v_ego']/30 for i in secx]
+plt.plot(x, y, label='a_ego')
+plt.plot(x, y2, label='gas')
+plt.plot(x, y3, label='v_ego')
+
+plt.legend()'''
+
 try:
     os.mkdir("models/h5_models/{}".format(model_name))
 except:
@@ -127,8 +151,8 @@ opt = keras.optimizers.Adadelta() #lr=.000375)
 opt = 'rmsprop'
 #opt = keras.optimizers.Adadelta()
 
-layer_num = 5
-nodes = 256
+layer_num = 6
+nodes = 312
 a_function = "relu"
 
 model = Sequential()
@@ -146,23 +170,24 @@ model.fit(x_train, y_train, shuffle=True, batch_size=300, epochs=200, validation
 
 seq_len = 100
 plt.clf()
-rand_start = random.randint(0, len(x_train) - seq_len)
+rand_start = random.randint(0, len(x_test) - seq_len)
 x = range(seq_len)
-y = y_train[rand_start:rand_start+seq_len]
-y2 = [model.predict([[i]])[0][0] for i in x_train[rand_start:rand_start+seq_len]]
+y = y_test[rand_start:rand_start+seq_len]
+y2 = [model.predict([[i]])[0][0] for i in x_test[rand_start:rand_start+seq_len]]
 plt.plot(x, y, label='ground truth')
 plt.plot(x, y2, label='prediction')
 plt.legend()
 plt.show()
 
 
-'''preds = []
+preds = []
 for idx, i in enumerate(x_test):
-    preds.append(abs(model.predict([[i]])[0][0] - y_test[idx]))
+    pred = model.predict([[i]])[0][0]
+    preds.append(abs(interp_fast(pred, [0, 1], [-1, 1]) - interp_fast(y_test[idx], [0, 1], [-1, 1])))
 
-print("Test accuracy: {}".format(1 - sum(preds) / len(preds)))
+print("Test accuracy: {}".format(interp_fast(sum(preds) / len(preds),[0, 2], [1, 0])))
 
-for c in np.where(y_test==0.5)[0][:20]:
+'''for c in np.where(y_test==0.5)[0][:20]:
     #c = random.randint(0, len(x_test))
     print('Ground truth: {}'.format(interp_fast(y_test[c], [0, 1], [-1, 1])))
     print('Prediction: {}'.format(interp_fast(model.predict([[x_test[c]]])[0][0], [0, 1], [-1, 1])))
@@ -186,23 +211,30 @@ for idx, i in enumerate(x_train):
 
 print("Train accuracy: {}".format(1 - sum(preds) / len(preds)))'''
 
-'''preds = [[]]*16  # gernby acc code
-for idx, i in enumerate(x_train):
-    pred = model.predict([[i]])[0]
-    acc = [abs(y_train[idx][idi] - i) for idi, i in enumerate(pred)]
-    for idi, i in enumerate(acc):
-        preds[idi].append(i)
+def feature_importance():
+    #input_num = x_train.shape[1] - len(car_data[0])
+    inputs = ['v_ego', 'steer_angle', 'steer_rate', 'a_lead', 'left_blinker', 'right_blinker', 'live_tracks']
+    base = np.zeros(x_train.shape[1])
+    base = model.predict([[base]])[0][0]
+    preds = {}
+    for idx, i in enumerate(inputs):
+        a = np.zeros(x_train.shape[1])
+        if i != 'live_tracks':
+            np.put(a, idx, 1)
+        else:
+            np.put(a, range(len(inputs)+1, x_train.shape[1]), 1)
+        preds[i] = abs(model.predict([[a]])[0][0] - base)
+    
+    plt.figure(2)
+    plt.clf()
+    [plt.bar(idx, preds[i], label=i) for idx, i in enumerate(preds)]
+    [plt.text(idx, preds[i]+.007, str(round(preds[i], 5)), ha='center') for idx, i in enumerate(preds)]
+    plt.xticks(range(0,len(inputs)), inputs)
+    plt.title('Feature importance (difference from zero baseline)')
+    plt.ylim(0, 1)
+    plt.show()
 
-for i in preds:
-    print(sum(i)/len(i))'''
-
-tf_lite = False
 def save_model():
     model.save("models/h5_models/"+model_name+".h5")
     print("Saved model!")
-    if tf_lite:
-        # convert model to tflite:
-        converter = tf.lite.TFLiteConverter.from_keras_model_file("models/h5_models/"+model_name+".h5")
-        tflite_model = converter.convert()
-        open("models/lite_models/"+model_name+".tflite", "wb").write(tflite_model)
 #save_model()

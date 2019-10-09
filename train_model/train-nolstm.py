@@ -63,7 +63,6 @@ else:
         x_train = pickle.load(f)
     with open("data/{}/y_train".format(data_dir), "rb") as f:
         y_train = pickle.load(f)
-    print(''+5)
     
     #tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
     tracks = [line['live_tracks']['tracks'] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
@@ -83,14 +82,14 @@ else:
     for idx, i in enumerate(x_train):  # use brake model to predict what the brake value is from v_ego and a_ego
         if y_train[idx] < 0.0:  # if brake sample
             to_pred = [interp_fast(i['v_ego'], brake_scales['v_ego_scale']), interp_fast(i['a_ego'], brake_scales['a_ego_scale'])]
-            predicted_brake = interp_fast(brake_model.predict([[to_pred]])[0][0], [0, 1], [-1, 1])
+            predicted_brake = brake_model.predict([[to_pred]])[0][0]  # this model already has the output unnormalized
             if predicted_brake < 0.0: # if prediction is to accel, default to coast (might want to choose arbitrary brake value)
                 neg_preds += 1
                 brake_preds.append(predicted_brake)
                 y_train[idx] = predicted_brake #(predicted_brake - 0.02) * 1.05  # increase predicted brake to add weight
             else:
                 pos_preds += 1
-                y_train[idx] = 0.0
+                y_train[idx] = -0.1
     
     print('Of {} predictions, {} were incorrectly positive while {} were correctly negative.'.format(pos_preds + neg_preds, pos_preds, neg_preds))
     print('The average brake prediction was {}, max {} and min {}'.format(sum(brake_preds) / len(brake_preds), min(brake_preds), max(brake_preds)))
@@ -152,7 +151,7 @@ opt = 'rmsprop'
 #opt = keras.optimizers.Adadelta()
 
 layer_num = 6
-nodes = 312
+nodes = 256
 a_function = "relu"
 
 model = Sequential()
@@ -163,7 +162,7 @@ for i in range(layer_num):
 model.add(Dense(1, activation='linear'))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=300, epochs=200, validation_data=(x_test, y_test))
+model.fit(x_train, y_train, shuffle=True, batch_size=512, epochs=200, validation_data=(x_test, y_test))
 #model = load_model("models/h5_models/{}.h5".format('live_tracksv6'))
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5

@@ -40,14 +40,13 @@ K.set_learning_phase(0)
 model_name = "live_tracks"
 model = load_model("h5_models/"+model_name+".h5")
 convert = True
-print([out.op.name for out in model.inputs])
-print([out.op.name for out in model.outputs])
 if convert:
     frozen_graph = freeze_session(K.get_session(),
                                 output_names=[out.op.name for out in model.outputs])
     
-    tf.train.write_graph(frozen_graph, "pb_models", model_name+".pb", as_text=False)
-
+    tf.io.write_graph(frozen_graph, "pb_models", model_name+".pb", as_text=False)
+    print([out.op.name for out in model.inputs])
+    print([out.op.name for out in model.outputs])
     '''gf = tf.GraphDef()
     gf.ParseFromString(open("pb_models/"+model_name+".pb","rb").read())
     print([n.name for n in gf.node])'''

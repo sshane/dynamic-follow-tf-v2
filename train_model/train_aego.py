@@ -19,13 +19,16 @@ import functools
 import operator
 from keras.models import load_model
 import os
-import load_brake_pred_model as lbpm
+#import load_brake_pred_model as lbpm
+
 
 def interp_fast(x, xp, fp=[0, 1], ext=False):  # extrapolates above range when ext is True
     interped = (((x - xp[0]) * (fp[1] - fp[0])) / (xp[1] - xp[0])) + fp[0]
     return interped if ext else min(max(min(fp), interped), max(fp))
 
-brake_model, brake_scales = lbpm.get_brake_pred_model()
+
+#brake_model, brake_scales = lbpm.get_brake_pred_model()
+
 
 def pad_tracks(tracks, max_tracks):
     to_add = max_tracks - len(tracks)
@@ -34,6 +37,7 @@ def pad_tracks(tracks, max_tracks):
     to_pad = [[0, 0, 0]]
     #return tracks + (to_add * to_pad)
     return (to_pad * to_add_left) + tracks + (to_pad * to_add_right)
+
 
 os.chdir("C:/Git/dynamic-follow-tf-v2")
 data_dir = "live_tracks"
@@ -61,8 +65,8 @@ else:
     print("Loading data...", flush=True)
     with open("data/{}/x_train".format(data_dir), "rb") as f:
         x_train = pickle.load(f)
-    with open("data/{}/y_train".format(data_dir), "rb") as f:
-        y_train = pickle.load(f)
+    # with open("data/{}/y_train".format(data_dir), "rb") as f:
+    #     y_train = pickle.load(f)
     
     #tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
     tracks = [line['live_tracks']['tracks'] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
@@ -97,7 +101,7 @@ else:
     all_a = [i['a_ego'] for i in x_train]
     scales['a_ego'] = [min(all_a), max(all_a)]
     y_train = np.array([interp_fast(i['a_ego'], scales['a_ego'], [0, 1]) for i in x_train])
-    #y_train = np.array([interp_fast(i, [-1, 1], [0, 1]) for i in y_train])
+    # y_train = np.array([interp_fast(i, [-1, 1], [0, 1]) for i in y_train])
     
     with open("data/{}/x_train_normalized".format(data_dir), "wb") as f:
         pickle.dump([tracks_normalized, car_data_normalized, scales], f)
@@ -121,7 +125,7 @@ x_train = np.array([i[0] + i[1] for i in zip(car_data_normalized, flat_tracks)])
 
 #y_train = np.array([i if i >= 0 else 0.0 for i in y_train])  # pick some constant arbitrary negative value so we know when to warn user
 
-x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.05)
+x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.01)
 print(x_train.shape)
 
 '''plt.clf()
@@ -142,19 +146,19 @@ try:
 except:
     pass
 
-opt = keras.optimizers.Adam(lr=0.01, decay=1.75e-4)
-#opt = keras.optimizers.Adadelta() #lr=.000375)
+opt = keras.optimizers.Adam(lr=0.00055)#, decay=1.75e-4)
+opt = keras.optimizers.Adadelta() #lr=.000375)
 #opt = keras.optimizers.SGD(lr=0.008, momentum=0.9)
-#opt = keras.optimizers.RMSprop(lr=0.00005)#, decay=1e-5)
+#opt = keras.optimizers.RMSprop(lr=0.00055, decay=1e-5)
 #opt = keras.optimizers.Adagrad(lr=0.00025)
 #opt = keras.optimizers.Adagrad()
 #opt = 'adam'
 
-opt = 'rmsprop'
+#opt = 'rmsprop'
 #opt = keras.optimizers.Adadelta()
 
-layer_num = 2
-nodes = 1024
+layer_num = 6
+nodes = 368
 a_function = "relu"
 
 model = Sequential()
@@ -162,10 +166,11 @@ model.add(Dense(x_train.shape[1], activation=a_function, input_shape=(x_train.sh
 
 for i in range(layer_num):
     model.add(Dense(nodes, activation=a_function))
+    #model.add(tf.nn.dropout())
 model.add(Dense(1, activation='linear'))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=512, epochs=200, validation_data=(x_test, y_test))
+model.fit(x_train, y_train, shuffle=True, batch_size=256, epochs=8000, validation_data=(x_test, y_test))
 #model = load_model("models/h5_models/{}.h5".format('live_tracksv6'))
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5
@@ -189,19 +194,19 @@ for idx, i in enumerate(x_test):
 
 print("Test accuracy: {}".format(interp_fast(sum(preds) / len(preds), [0, max([abs(i) for i in scales['a_ego']])], [1, 0])))
 
-'''for c in np.where(y_test==0.5)[0][:20]:
+'''for c in np.where(y_test==interp_fast(0.0, scales['a_ego'], [0, 1]))[0][:20]:
     #c = random.randint(0, len(x_test))
     print('Ground truth: {}'.format(interp_fast(y_test[c], [0, 1], scales['a_ego'])))
     print('Prediction: {}'.format(interp_fast(model.predict([[x_test[c]]])[0][0], [0, 1], scales['a_ego'])))
     print()
 
-for c in np.where(y_test>0.5)[0][:20]:
+for c in np.where(y_test>interp_fast(0.0, scales['a_ego'], [0, 1]))[0][:20]:
     #c = random.randint(0, len(x_test))
     print('Ground truth: {}'.format(interp_fast(y_test[c], [0, 1], scales['a_ego'])))
     print('Prediction: {}'.format(interp_fast(model.predict([[x_test[c]]])[0][0], [0, 1], scales['a_ego'])))
     print()
 
-for c in np.where(y_test<0.5)[0][:20]:
+for c in np.where(y_test<interp_fast(0.0, scales['a_ego'], [0, 1]))[0][:20]:
     #c = random.randint(0, len(x_test))
     print('Ground truth: {}'.format(interp_fast(y_test[c], [0, 1], scales['a_ego'])))
     print('Prediction: {}'.format(interp_fast(model.predict([[x_test[c]]])[0][0], [0, 1], scales['a_ego'])))
@@ -236,7 +241,7 @@ def feature_importance():
     plt.ylim(0, 1)
     plt.show()
 
-def save_model():
+def save_model(model_name=model_name):
     model.save("models/h5_models/"+model_name+".h5")
     print("Saved model!")
 #save_model()

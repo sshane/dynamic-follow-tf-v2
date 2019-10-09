@@ -41,9 +41,9 @@ for folder in os.listdir(data_dir):
                         line = json.loads(line)
                     except:
                         continue
-                    
-                    driving_data.append(line)
-                    gm_counter += 1 
+                    if line[-3] - line[-2] < 0.0:
+                        driving_data.append(line)
+                        gm_counter += 1
 
 x = range(len(driving_data))
 #y = [i[-3] - i[-2] for i in driving_data]

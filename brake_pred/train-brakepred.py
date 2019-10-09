@@ -11,13 +11,18 @@ import matplotlib.pyplot as plt
 import pickle
 from keras import backend as K
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import normalize as sknorm
 import shutil
 import functools
 import operator
 from keras.models import load_model
+from tensorflow.compat.v1.keras.utils import normalize
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
 
-def interp_fast(x, xp, fp=[0, 1]):  # extrapolates above range, np.interp does not
-    return (((x - xp[0]) * (fp[1] - fp[0])) / (xp[1] - xp[0])) + fp[0]
+def interp_fast(x, xp, fp=[0, 1], ext=False):  # extrapolates above range when ext is True
+    interped = (((x - xp[0]) * (fp[1] - fp[0])) / (xp[1] - xp[0])) + fp[0]
+    return interped if ext else min(max(min(fp), interped), max(fp))
 
 os.chdir("C:/Git/dynamic-follow-tf-v2")
 data_dir = "brake_pred"
@@ -30,7 +35,7 @@ with open("data/{}/x_train".format(data_dir), "rb") as f:
 with open("data/{}/y_train".format(data_dir), "rb") as f:
     y_train = pickle.load(f)
 
-print("Loading data...")
+print("Loading test data...")
 with open("data/live_tracks/x_train", "rb") as f:
     x_train_nobrake = pickle.load(f)
 with open("data/live_tracks/y_train", "rb") as f:
@@ -44,38 +49,46 @@ with open("data/live_tracks/y_train", "rb") as f:
 
 print("Normalizing data...")
 x_train, scales = normX(x_train)
+scales['gas'] = [min(y_train), max(y_train)]
 x_train = np.array(x_train)
-y_train = np.array([interp_fast(i, [-1, 1]) for i in y_train])
+#y_train = np.array([interp_fast(i, scales['gas'], [1, 0]) for i in y_train])
+#y_train = np.array(y_train)
+#y_train = normalize(y_train).reshape(-1)
 with open("data/{}/scales".format(data_dir), "wb") as f:
     pickle.dump(scales, f)
 
 #x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.1)
 
-opt = keras.optimizers.Adam(lr=0.0001)
+opt = keras.optimizers.Adam()
 #opt = keras.optimizers.Adadelta(lr=.000375)
 #opt = keras.optimizers.SGD(lr=0.008, momentum=0.9)
 #opt = keras.optimizers.RMSprop(lr=0.00005)#, decay=1e-5)
 #opt = keras.optimizers.Adagrad(lr=0.00025)
-#opt = keras.optimizers.Adagrad(lr=0.001)
+#opt = keras.optimizers.Adagrad()
 #opt = 'adam'
 
-opt = 'rmsprop'
+#opt = 'rmsprop'
 #opt = keras.optimizers.Adadelta()
 
-layer_num = 4
-nodes = 128
+layer_num = 5
+nodes = 64
 a_function = "relu"
 
+# model = Sequential()
+# model.add(Dense(256, activation=a_function, input_shape=(x_train.shape[1:])))
+#
+# for i in range(layer_num - 1):
+#     model.add(Dense(nodes, activation=a_function))
+# model.add(Dense(1, activation='linear'))
 model = Sequential()
-model.add(Dense(nodes, activation=a_function, input_shape=(x_train.shape[1:])))
-
-for i in range(layer_num - 1):
-    model.add(Dense(nodes, activation=a_function))
-model.add(Dense(1, activation='linear'))
-    
+model.add(Dense(2, input_shape=(x_train.shape[1:])))
+model.add(Dense(128, activation=a_function))
+model.add(Dense(128, activation=a_function))
+model.add(Dense(64, activation=a_function))
+model.add(Dense(1))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=128, epochs=10, validation_split=0.4)
+model.fit(x_train, y_train, shuffle=True, batch_size=512, epochs=1000, validation_split=0.05)
 #model = load_model("models/h5_models/{}.h5".format(model_name))
 
 #x_train_all = x_train_all[20000:25000]
@@ -106,9 +119,8 @@ y = []
 y_true = []
 while len(y) != 50:
     c = random.randrange(len(x_train))
-    if y_train[c] < 0.4:
-        y.append(model.predict([[x_train[c]]])[0][0])
-        y_true.append(y_train[c])
+    y.append(model.predict([[x_train[c]]])[0][0])
+    y_true.append(y_train[c])
 plt.plot(x,y, label='pred')
 plt.plot(x,y_true, label='ground')
 plt.title('train data')
@@ -120,10 +132,10 @@ y = []
 y_true = []
 while len(y) != 50:
     c = random.randrange(len(x_train_nobrake))
-    if y_train_nobrake[c] > 0.0:
+    if y_train_nobrake[c] < 0.0:
         to_pred = [interp_fast(x_train_nobrake[c]['v_ego'], scales['v_ego_scale'], [0, 1]), interp_fast(x_train_nobrake[c]['a_ego'], scales['a_ego_scale'], [0, 1])]
         y.append(model.predict([[to_pred]])[0][0])
-        y_true.append(interp_fast(y_train_nobrake[c], [-1, 1], [0, 1]))
+        y_true.append(y_train_nobrake[c])
 plt.plot(x,y, label='pred')
 plt.plot(x,y_true, label='ground')
 plt.title('live tracks data')
@@ -160,7 +172,7 @@ while showed <= 20:
         print()'''
 
 
-save_model = False
+save_model = True
 tf_lite = False
 if save_model:
     model.save("models/h5_models/"+model_name+".h5")

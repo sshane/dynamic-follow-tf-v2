@@ -19,6 +19,7 @@ def normX(data, data_scale=None):
                   'a_ego_scale': [min(a_ego), max(a_ego)]}
 
         normalized = [[interp_fast(i[0], scales['v_ego_scale']), interp_fast(i[1], scales['a_ego_scale'])] for i in data]
+        #normalized = [[i[0], i[1]] for i in data]
         return normalized, scales
     else:
         y = [data_scale[0], data_scale[1]]

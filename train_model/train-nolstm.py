@@ -6,7 +6,7 @@ import os
 import tensorflow as tf
 from keras.models import Sequential
 import keras
-from keras.layers import Dense, Dropout, LSTM, CuDNNLSTM, Activation, LeakyReLU, Flatten
+from keras.layers import Dense, Dropout, LSTM, CuDNNLSTM, Activation, LeakyReLU, Flatten, PReLU, ELU, LeakyReLU
 import numpy as np
 import random
 from normalizer import normX
@@ -51,50 +51,60 @@ except:
 
 
 if os.path.exists("data/{}/x_train_normalized".format(data_dir)):
-    print('Loading normalized data', flush=True)
+    print('Loading normalized data...', flush=True)
     with open("data/{}/x_train_normalized".format(data_dir), "rb") as f:
         tracks_normalized, car_data_normalized, scales = pickle.load(f)
     with open("data/{}/y_train_normalized".format(data_dir), "rb") as f:
         y_train = pickle.load(f)
-    max_tracks = scales['max_tracks']
 else:
     print("Loading data...", flush=True)
     with open("data/{}/x_train".format(data_dir), "rb") as f:
         x_train = pickle.load(f)
     with open("data/{}/y_train".format(data_dir), "rb") as f:
         y_train = pickle.load(f)
-    
+    remove_signals = True
+    if remove_signals:
+        x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if x['left_blinker'] or x['right_blinker']])  # filter samples with turn signals
+        x_train, y_train = map(list, [x_train, y_train])
+
+    remove_brake = True
+    if remove_brake:
+        x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if y >= 0])  # filter samples with turn signals
+        x_train, y_train = map(list, [x_train, y_train])
+
     #tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
-    tracks = [line['live_tracks']['tracks'] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
-    max_tracks = max([len(i) for i in tracks])  # max number of tracks in all samples
+    tracks = [line['live_tracks']['tracks'] for line in x_train]  # remove tracks under 3 mph if no lead and above 20 mph
     
     # get relevant training car data to normalize
     car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status']] for line in x_train]
     
     print("Normalizing data...", flush=True)  # normalizes track dicts into [yRel, dRel, vRel trackStatus (0/1)] lists for training
     tracks_normalized, car_data_normalized, scales = normX(tracks, car_data)  # normalizes data and adds blinkers
-    scales['max_tracks'] = max_tracks
-    
-    print("Predicting brake data...", flush=True)
-    pos_preds = 0
-    neg_preds = 0
-    brake_preds = []
-    for idx, i in enumerate(x_train):  # use brake model to predict what the brake value is from v_ego and a_ego
-        if y_train[idx] < 0.0:  # if brake sample
-            to_pred = [interp_fast(i['v_ego'], brake_scales['v_ego_scale']), interp_fast(i['a_ego'], brake_scales['a_ego_scale'])]
-            predicted_brake = brake_model.predict([[to_pred]])[0][0]  # this model already has the output unnormalized
-            if predicted_brake < 0.0: # if prediction is to accel, default to coast (might want to choose arbitrary brake value)
-                neg_preds += 1
-                brake_preds.append(predicted_brake)
-                y_train[idx] = predicted_brake #(predicted_brake - 0.02) * 1.05  # increase predicted brake to add weight
-            else:
-                pos_preds += 1
-                y_train[idx] = -0.1
-    
-    print('Of {} predictions, {} were incorrectly positive while {} were correctly negative.'.format(pos_preds + neg_preds, pos_preds, neg_preds))
-    print('The average brake prediction was {}, max {} and min {}'.format(sum(brake_preds) / len(brake_preds), min(brake_preds), max(brake_preds)))
-    
+    scales['max_tracks'] = max([len(i) for i in tracks])  # max number of tracks in all samples
+
+    if not remove_brake:
+        print("Predicting brake samples...", flush=True)
+        pos_preds = 0
+        neg_preds = 0
+        brake_preds = []
+        for idx, i in enumerate(x_train):  # use brake model to predict what the brake value is from v_ego and a_ego
+            if y_train[idx] < 0.0:  # if brake sample
+                to_pred = [interp_fast(i['v_ego'], brake_scales['v_ego_scale']), interp_fast(i['a_ego'], brake_scales['a_ego_scale'])]
+                predicted_brake = brake_model.predict([[to_pred]])[0][0]  # this model already has the output unnormalized
+                if predicted_brake < 0.0:  # if prediction is to accel, default to coast (might want to choose arbitrary brake value)
+                    neg_preds += 1
+                    brake_preds.append(predicted_brake)
+                    y_train[idx] = predicted_brake  #(predicted_brake - 0.02) * 1.05  # increase predicted brake to add weight
+                else:
+                    pos_preds += 1
+                    y_train[idx] = -0.1
+
+        print('Of {} predictions, {} were incorrectly positive while {} were correctly negative.'.format(pos_preds + neg_preds, pos_preds, neg_preds))
+        print('The average brake prediction was {}, max {} and min {}'.format(sum(brake_preds) / len(brake_preds), min(brake_preds), max(brake_preds)))
+
     y_train = np.array([interp_fast(i, [-1, 1], [0, 1]) for i in y_train])
+    scales['gas'] = [min(y_train), max(y_train)]
+    #y_train = np.array([interp_fast(i, scales['gas'], [0, 1]) for i in y_train])
     
     with open("data/{}/x_train_normalized".format(data_dir), "wb") as f:
         pickle.dump([tracks_normalized, car_data_normalized, scales], f)
@@ -108,7 +118,7 @@ print("Sorting tracks...")
 tracks_sorted = [sorted(line, key=lambda track: track[0]) for line in tracks_normalized]  # sort tracks by yRel
 
 # pad tracks to max_tracks length so the shape is correct for training (keeps data in center of pad)
-tracks_padded = [line if len(line) == max_tracks else pad_tracks(line, max_tracks) for line in tracks_sorted]  # tracks_sorted
+tracks_padded = [line if len(line) == scales['max_tracks'] else pad_tracks(line, scales['max_tracks']) for line in tracks_sorted]  # tracks_sorted
 
 # flatten tracks to 1d array
 flat_tracks = [[item for sublist in sample for item in sublist] for sample in tracks_padded]
@@ -118,7 +128,7 @@ x_train = np.array([i[0] + i[1] for i in zip(car_data_normalized, flat_tracks)])
 
 #y_train = np.array([i if i >= 0 else 0.0 for i in y_train])  # pick some constant arbitrary negative value so we know when to warn user
 
-x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.05)
+x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.1)
 print(x_train.shape)
 
 '''plt.clf()
@@ -139,30 +149,33 @@ try:
 except:
     pass
 
-#opt = keras.optimizers.Adam(lr=0.01, decay=1.75e-4)
-opt = keras.optimizers.Adadelta() #lr=.000375)
-#opt = keras.optimizers.SGD(lr=0.008, momentum=0.9)
-#opt = keras.optimizers.RMSprop(lr=0.00005)#, decay=1e-5)
-#opt = keras.optimizers.Adagrad(lr=0.00025)
-#opt = keras.optimizers.Adagrad()
-#opt = 'adam'
+#opt = keras.optimizers.Adam(lr=0.001)
+# opt = keras.optimizers.Adadelta() #lr=.000375)
+# opt = keras.optimizers.SGD(lr=0.008, momentum=0.9)
+# opt = keras.optimizers.RMSprop(lr=0.00005)#, decay=1e-5)
+# opt = keras.optimizers.Adagrad(lr=0.00025)
+# opt = keras.optimizers.Adagrad()
+opt = 'adam'
 
-opt = 'rmsprop'
-#opt = keras.optimizers.Adadelta()
+#opt = 'rmsprop'
+# opt = keras.optimizers.Adadelta()
 
 layer_num = 6
-nodes = 256
+nodes = 346
 a_function = "relu"
 
 model = Sequential()
-model.add(Dense(x_train.shape[1], activation=a_function, input_shape=(x_train.shape[1:])))
-
-for i in range(layer_num):
-    model.add(Dense(nodes, activation=a_function))
+model.add(Dense(x_train.shape[1] + 1, activation=None, input_shape=(x_train.shape[1:])))
+model.add(Dense(512, activation=a_function))
+model.add(Dense(256, activation=a_function))
+model.add(Dense(256, activation=a_function))
+model.add(Dense(128, activation=a_function))
+# for i in range(layer_num):
+#     model.add(Dense(nodes, activation=a_function))
 model.add(Dense(1, activation='linear'))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=512, epochs=200, validation_data=(x_test, y_test))
+model.fit(x_train, y_train, shuffle=False, batch_size=256, epochs=20, validation_data=(x_test, y_test))
 #model = load_model("models/h5_models/{}.h5".format('live_tracksv6'))
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5

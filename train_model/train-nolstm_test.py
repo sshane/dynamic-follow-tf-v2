@@ -69,6 +69,7 @@ else:
         x_train, y_train = map(list, [x_train, y_train])
 
     data_filter = "all"  # can be "gas", "brake", or "all" to do nothing
+    predict_brake = False
     if data_filter == "gas":
         print("Filtering out brake samples...")
         x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if y >= 0.0])  # keep gas or coast samples
@@ -88,7 +89,7 @@ else:
     tracks_normalized, car_data_normalized, scales = normX(tracks, car_data)  # normalizes data and adds blinkers
     scales['max_tracks'] = max([len(i) for i in tracks])  # max number of tracks in all samples
 
-    if data_filter in ["brake", "all"]:
+    if data_filter in ["brake", "all"] and predict_brake:
         print("Predicting brake samples...", flush=True)
         pos_preds = 0
         neg_preds = 0
@@ -100,13 +101,13 @@ else:
                 if predicted_brake < 0.0:  # if prediction is to accel, default to coast (might want to choose arbitrary brake value)
                     neg_preds += 1
                     brake_preds.append(predicted_brake)
-                    y_train[idx] = predicted_brake * 1.5  #(predicted_brake * 1.5)  # increase predicted brake to add weight
+                    y_train[idx] = predicted_brake * 1.25  #(predicted_brake * 1.5)  # increase predicted brake to add weight
                 else:
                     pos_preds += 1
                     y_train[idx] = -0.1
 
         print('Of {} predictions, {} were incorrectly positive while {} were correctly negative.'.format(pos_preds + neg_preds, pos_preds, neg_preds))
-        print('The average brake prediction was {}, max {} and min {}'.format(sum(brake_preds) / len(brake_preds), min(brake_preds), max(brake_preds)))
+        #print('The average brake prediction was {}, max {} and min {}'.format(sum(brake_preds) / len(brake_preds), min(brake_preds), max(brake_preds)))
 
     scales['gas'] = [min(y_train), max(y_train)]
     #y_train = np.array([interp_fast(i, [-1, 1], [0, 1]) for i in y_train])
@@ -140,19 +141,23 @@ x_train = np.array([car_dat + fl_tr for car_dat, fl_tr in zip(car_data_normalize
 x_train_copy = np.array(x_train)
 y_train_copy = np.array(y_train)
 
-y_train_new = []
-for i in y_train:
-    #i_norm = interp_fast(i, [-1, 1], [0, 1])
-    if i == 0.0:
-        output = [0, 0]
-    if i > 0:
-        output = [i, 0]
-    if i < 0:
-        output = [0, -i]
+two_outputs = False
+if two_outputs:
+    y_train_new = []
+    for i in y_train:
+        #i_norm = interp_fast(i, [-1, 1], [0, 1])
+        if i == 0.0:
+            output = [0, 0]
+        elif i > 0:
+            output = [i, 0]
+        else:
+            output = [0, -i]
 
-    y_train_new.append(output)
+        y_train_new.append(output)
 
-y_train = np.array(y_train_new)
+    y_train = np.array(y_train_new)
+else:
+    y_train = np.array([interp_fast(i, [-1, 1], [0, 1]) for i in y_train])  # this is the best performing model architecture
 
 '''
 x_train = np.array(x_train_copy)
@@ -204,94 +209,117 @@ model.add(Dense(128, activation=a_function))
 model.add(Dense(128, activation=a_function))
 # for i in range(layer_num):
 #     model.add(Dense(nodes, activation=a_function))
-model.add(Dense(2, activation='linear'))
+if two_outputs:
+    model.add(Dense(2, activation='linear'))
+else:
+    model.add(Dense(1, activation='linear'))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=False, batch_size=256, epochs=200, validation_data=(x_test, y_test))
+model.fit(x_train, y_train, shuffle=False, batch_size=256, epochs=50, validation_data=(x_test, y_test))
 #model = load_model("models/h5_models/{}.h5".format('live_tracksv6'))
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5
 
-seq_len = 100
-plt.clf()
-rand_start = random.randint(0, len(x_test) - seq_len)
-x = range(seq_len)
-y = y_test[rand_start:rand_start+seq_len]
-y2 = [model.predict([[i]])[0][1] for i in x_test[rand_start:rand_start+seq_len]]
-plt.plot(x, [i[1] for i in y], label='ground truth')
-plt.plot(x, y2, label='prediction')
-plt.legend()
-plt.pause(0.01)
-plt.show()
+plot_titles = ['gas', 'brake']
+for idx in range(2):
+    plt.figure(idx)
+    seq_len = 100
+    plt.clf()
+    rand_start = random.randint(0, len(x_test) - seq_len)
+    x = range(seq_len)
+    y = y_test[rand_start:rand_start+seq_len]
+    y2 = [model.predict([[i]])[0][idx] for i in x_test[rand_start:rand_start+seq_len]]
+    plt.title(plot_titles[idx])
+    plt.plot(x, [i[idx] for i in y], label='ground truth')
+    plt.plot(x, y2, label='prediction')
+    plt.legend()
+    plt.pause(0.01)
+    plt.show()
 
 def visualize():
-    to_display = 100
-    plt.figure(0)
-    plt.clf()
-    plt.title('coast samples: predicted vs ground')
-    find = [0, 0]
-    found = [idx for idx, i in enumerate(y_test) if list(i) == find]
-    found = np.random.choice(found, to_display)
-    ground = [y_test[i][0] for i in found]
-    pred = [model.predict([[x_test[i]]])[0][0] for i in found]
-    plt.plot(range(len(found)), ground, label='ground truth')
-    plt.plot(range(len(ground)), pred, label='prediction')
-    plt.ylim(0, 1.0)
-    plt.legend()
-    plt.show()
+    try:
+        to_display = 100
+        plt.figure(0)
+        plt.clf()
+        plt.title('coast samples: predicted vs ground')
+        find = [0, 0]
+        found = [idx for idx, i in enumerate(y_test) if list(i) == find]
+        found = np.random.choice(found, to_display)
+        ground = [y_test[i][0] for i in found]
+        pred = [model.predict([[x_test[i]]])[0] for i in found]
+        plt.plot(range(len(found)), ground, label='ground truth')
+        plt.plot(range(len(ground)), [i[0] for i in pred], label='gas prediction')
+        plt.plot(range(len(ground)), [i[1] for i in pred], label='brake prediction')
+        plt.ylim(0, 1.0)
+        plt.legend()
+        plt.show()
+    except:
+        pass
 
-    plt.figure(1)
-    plt.clf()
-    plt.title('medium acceleration samples: predicted vs ground')
-    find = [.25, 0]
-    found = [idx for idx, i in enumerate(y_test) if list(i) == find]
-    found = np.random.choice(found, to_display)
-    ground = [y_test[i][0] for i in found]
-    pred = [model.predict([[x_test[i]]])[0][0] for i in found]
-    plt.plot(range(len(found)), ground, label='ground truth')
-    plt.plot(range(len(ground)), pred, label='prediction')
-    plt.ylim(-1.0, 1.0)
-    plt.legend()
-    plt.show()
+    try:
+        plt.figure(1)
+        plt.clf()
+        plt.title('medium acceleration samples: predicted vs ground')
+        find = [.25, 0]
+        found = [idx for idx, i in enumerate(y_test) if list(i) == find]
+        found = np.random.choice(found, to_display)
+        ground = [y_test[i][0] for i in found]
+        pred = [model.predict([[x_test[i]]])[0] for i in found]
+        plt.plot(range(len(found)), ground, label='ground truth')
+        plt.plot(range(len(ground)), [i[0] for i in pred], label='gas prediction')
+        plt.plot(range(len(ground)), [i[1] for i in pred], label='brake prediction')
+        plt.ylim(-1.0, 1.0)
+        plt.legend()
+        plt.show()
+    except:
+        pass
 
-    plt.figure(2)
-    plt.clf()
-    plt.title('heavy acceleration samples: predicted vs ground')
-    find = [.5, 0]
-    found = [idx for idx, i in enumerate(y_test) if list(i) == find]
-    found = np.random.choice(found, to_display)
-    ground = [y_test[i][0] for i in found]
-    pred = [model.predict([[x_test[i]]])[0][0] for i in found]
-    plt.plot(range(len(found)), ground, label='ground truth')
-    plt.plot(range(len(ground)), pred, label='prediction')
-    plt.ylim(-1.0, 1.0)
-    plt.legend()
-    plt.show()
+    try:
+        plt.figure(2)
+        plt.clf()
+        plt.title('heavy acceleration samples: predicted vs ground')
+        find = [.5, 0]
+        found = [idx for idx, i in enumerate(y_test) if list(i) == find]
+        found = np.random.choice(found, to_display)
+        ground = [y_test[i][0] for i in found]
+        pred = [model.predict([[x_test[i]]])[0] for i in found]
+        plt.plot(range(len(found)), ground, label='ground truth')
+        plt.plot(range(len(ground)), [i[0] for i in pred], label='gas prediction')
+        plt.plot(range(len(ground)), [i[1] for i in pred], label='brake prediction')
+        plt.ylim(-1.0, 1.0)
+        plt.legend()
+        plt.show()
+    except:
+        pass
 
-    plt.figure(3)
-    plt.clf()
-    plt.title('medium brake samples: predicted vs ground')
-    find = [0, 0.2]
-    found = [idx for idx, i in enumerate(y_test) if list(i) == find]
-    found = np.random.choice(found, to_display)
-    ground = [y_test[i][1] for i in found]
-    pred = [model.predict([[x_test[i]]])[0][1] for i in found]
-    plt.plot(range(len(found)), ground, label='ground truth')
-    plt.plot(range(len(ground)), pred, label='prediction')
-    plt.ylim(-1.0, 1.0)
-    plt.legend()
-    plt.show()
+    try:
+        plt.figure(3)
+        plt.clf()
+        plt.title('medium brake samples: predicted vs ground')
+        find = [0, 0.3]
+        found = [idx for idx, i in enumerate(y_test) if list(i) == find]
+        found = np.random.choice(found, to_display)
+        ground = [y_test[i][1] for i in found]
+        pred = [model.predict([[x_test[i]]])[0] for i in found]
+        plt.plot(range(len(found)), ground, label='ground truth')
+        plt.plot(range(len(ground)), [i[0] for i in pred], label='gas prediction')
+        plt.plot(range(len(ground)), [i[1] for i in pred], label='brake prediction')
+        plt.ylim(-1.0, 1.0)
+        plt.legend()
+        plt.show()
+    except:
+        pass
 
 
 preds_gas = []
 preds_brake = []
-for idx, i in enumerate(x_test[:10000]):
+for idx, i in enumerate(x_test[:20000]):
     pred = model.predict([[i]])[0]
     preds_gas.append(abs(pred[0] - y_test[idx][0]))
     preds_brake.append(abs(pred[1] - y_test[idx][1]))
 
-print("Test gas accuracy: {}".format(1 - sum(preds_gas) / len(preds_gas)))
-print("Test brake accuracy: {}".format(1 - sum(preds_brake) / len(preds_brake)))
+print("Test gas accuracy: {}".format(interp_fast(sum(preds_gas) / len(preds_gas), [0, .5], [1, 0], ext=True)))
+print("Test brake accuracy: {}".format(interp_fast(sum(preds_brake) / len(preds_brake), [0, .5], [1, 0], ext=True)))
 
 for i in range(20):
     c = random.randint(0, len(x_test))

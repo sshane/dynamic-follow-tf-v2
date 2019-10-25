@@ -14,14 +14,14 @@ def interp_fast(x, xp, fp):  # extrapolates above range, np.interp does not
 os.chdir("C:/Git/dynamic-follow-tf-v2/data")
 data_dir = "D:/Resilio Sync/dfv2"
 driving_data = []
-supported_users = ['ShaneSmiskol-TOYOTA COROLLA 2017']  # ['l3VlZMd4IrYecnk-HOLDEN ASTRA RS-V BK 2017']
+supported_users = ['l3VlZMd4IrYecnk-HOLDEN ASTRA RS-V BK 2017']  # ['ShaneSmiskol-TOYOTA COROLLA 2017'] #, 'i9NmzGB44XW8h86-TOYOTA COROLLA 2017']  #,]
 consider_set_speed = False  # removing set_speed for now
 use_pedal = False
 
 print("Loading data...")
 for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
     for filename in os.listdir(os.path.join(data_dir, folder)):
-        if 'old' not in filename and '.txt' not in filename:
+        if 'old' not in filename and '.txt' not in filename and 'df-data' in filename:
             file_path = os.path.join(os.path.join(data_dir, folder), filename)
             print('Processing: {}'.format(file_path))
             with open(file_path, 'r') as f:
@@ -37,6 +37,9 @@ for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
             new_format = type(data[0]) == list  # new space saving format, this will convert it to list of dicts
             if new_format:
                 keys = data[0]  # gets keys and removes keys from data
+                if len(keys) != len(data[1]):
+                    print('Length of keys not equal to length of data')
+                    raise Exception
                 if 'track_data' in keys:
                     keys[keys.index('track_data')] = 'live_tracks'
                 if 'lead_status' in keys:
@@ -45,6 +48,8 @@ for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
                     keys[keys.index('time.time()')] = 'time'
                 data = data[1:]
                 data = [dict(zip(keys, i)) for i in data]
+            else:
+                raise Exception("Error. Not new format!")
             
             #pedal = any([True if i['car_gas'] > 0.0 else False for i in data])
             #if pedal:
@@ -76,7 +81,23 @@ for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
                 if 'HOLDEN' not in folder:
                     new_brake = line['brake'] / 4047.0 if line['brake'] >= 256 and line['gas'] == 0.0 else 0  # throw out brake when gas is applied or pressure less than or equal to 512
                     line.update({'brake': new_brake})
+                line['v_ego'] = max(line['v_ego'], 0.0)  # remove negative velocities
                 driving_data.append(line)
+
+even_out = False
+if even_out:  # based on gas and brake
+    gas = [i for i in driving_data if i['gas'] - i['brake'] > 0]
+    brake = [i for i in driving_data if i['gas'] - i['brake'] < 0]
+    coast = [i for i in driving_data if i['gas'] - i['brake'] == 0]
+
+    if len(gas) > len(brake):
+        print('Reducing gas length from {} to {}.'.format(len(gas), len(brake)))
+        gas = random.sample(gas, len(brake))
+    elif len(brake) > len(gas):
+        print('Reducing brake length from {} to {}.'.format(len(brake), len(gas)))
+        brake = random.sample(brake, len(gas))
+
+    driving_data = gas + brake + coast
 
 print("Total samples: {}".format(len(driving_data)))
 y_train = [line['gas'] - line['brake'] for line in driving_data]

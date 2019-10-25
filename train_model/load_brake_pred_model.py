@@ -20,7 +20,6 @@ def interp_fast(x, xp, fp=[0, 1]):  # extrapolates above range, np.interp does n
 
 os.chdir("C:/Git/dynamic-follow-tf-v2")
 data_dir = "brake_pred"
-norm_dir = "data/{}/normalized"
 model_name = "brake_pred"
 
 def load_scales():
@@ -38,4 +37,4 @@ def get_scales():
 
 def get_brake_pred_model():
     scales = get_scales()
-    return load_model('models/h5_models/brake_pred.h5'), scales
+    return load_model('models/h5_models/{}.h5'.format(model_name)), scales

@@ -21,7 +21,7 @@ def normX(samples, car_data):
         for track in sample:
             tracks_normalized[idx].append([interp_fast(track['yRel'], scales['yRel']),
                                            interp_fast(track['dRel'], scales['dRel']),
-                                           interp_fast(track['vRel'], scales['vRel'])])  # 1 means it's a real track, 0 for padded empty data
+                                           interp_fast(track['vRel'], scales['vRel'])])
     # normalize car data
     car_data = np.array(car_data)
     mins = np.min(car_data, axis=0)
@@ -37,10 +37,10 @@ def normX(samples, car_data):
         else:
             i[3] = interp_fast(i[3], scales['a_lead'])
         car_data_normalized.append([interp_fast(i[0], scales['v_ego']),
-                                    interp_fast(i[1], scales['steer_angle'])])
-                                    #interp_fast(i[2], scales['steer_rate'])])
-                                    #i[3]])
-                                    #int(i[4]), int(i[5])])  # adds blinkers
+                                    interp_fast(i[1], scales['steer_angle']),
+                                    interp_fast(i[2], scales['steer_rate']),
+                                    i[3],
+                                    int(i[4]), int(i[5])])  # adds blinkers
 
     return tracks_normalized, car_data_normalized, scales
 

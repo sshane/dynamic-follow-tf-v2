@@ -75,10 +75,26 @@ def feature_importance():
     plt.show()
 
 
+def show_coast(to_display=200):
+    plt.figure(0)
+    plt.clf()
+    plt.title('coast samples: predicted vs ground')
+    find = .5
+    found = [idx for idx, i in enumerate(y_test) if i == find and x_test[idx][0] > .62]  # and going above 40 mph
+    found = np.random.choice(found, to_display)
+    ground = [interp_fast(y_test[i], [0, 1], [-1, 1]) for i in found]
+    pred = [interp_fast(model.predict([[x_test[i]]])[0][0], [0, 1], [-1, 1]) for i in found]
+    plt.plot(range(len(found)), ground, label='ground truth')
+    plt.scatter(range(len(ground)), pred, label='prediction', s=20)
+    plt.ylim(-1.0, 1.0)
+    plt.legend()
+    plt.pause(0.01)
+    plt.show()
+
 class Visualize(keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs={}):
         #feature_importance()
-        pass
+        show_coast()
 
 if os.path.exists("data/{}/x_train_normalized".format(data_dir)):
     print('Loading normalized data...', flush=True)
@@ -110,11 +126,20 @@ else:
         x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if y <= 0.0])  # keep only brake or coast samples
         x_train, y_train = map(list, [x_train, y_train])
 
-    #tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
-    tracks = [line['live_tracks']['tracks'] for line in x_train]  # remove tracks under 3 mph if no lead and above 20 mph
+    # tracks = [[track for track in line['live_tracks']['tracks'] if abs(track['yRel']) < 4.45] for line in x_train]
+    # tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego']) >= 0 and ((line['v_ego'] >= 8.9408 and track['vRel'] + line['v_ego'] > 2.2352) or (line['v_ego'] < 8.9408)) and abs(track['yRel']) < 4.45] for line in x_train]
+
+    tracks = [[track for track in line['live_tracks']['tracks'] if
+               # keep track if v_ego above 25 mph and track vel is above 5 mph OR if v_ego is less than 25 mph
+               ((line['v_ego'] >= 11.176 and track['vRel'] + line['v_ego'] > 2.2352) or
+                line['v_ego'] < 11.176)] for line in x_train]
+
+    # tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
+    # tracks = [line['live_tracks']['tracks'] for line in x_train]
     
     # get relevant training car data to normalize
-    car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status']] for line in x_train]
+    car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status'], line['x_lead'], line['v_lead']] for line in x_train]
+    # car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status']] for line in x_train]
     
     print("Normalizing data...", flush=True)  # normalizes track dicts into [yRel, dRel, vRel trackStatus (0/1)] lists for training
     tracks_normalized, car_data_normalized, scales = normX(tracks, car_data)  # normalizes data and adds blinkers
@@ -161,7 +186,7 @@ tracks_padded = [line if len(line) == scales['max_tracks'] else pad_tracks(line,
 flat_tracks = [[item for sublist in sample for item in sublist] for sample in tracks_padded]
 
 # combine into one list
-x_train = np.array([car_dat[:2] + fl_tr for car_dat, fl_tr in zip(car_data_normalized, flat_tracks)])
+x_train = np.array([car_dat + fl_tr for car_dat, fl_tr in zip(car_data_normalized, flat_tracks)])
 #x_train = np.array(flat_tracks)
 
 #y_train = np.array([i if i >= 0 else 0.0 for i in y_train])  # pick some constant arbitrary negative value so we know when to warn user
@@ -227,7 +252,8 @@ model.add(Dense(128, activation=a_function))
 model.add(Dense(1, activation='linear'))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=512, epochs=5000, validation_data=(x_test, y_test), callbacks=[Visualize()])
+callbacks = [Visualize()]
+model.fit(x_train, y_train, shuffle=True, batch_size=512, epochs=5000, validation_data=(x_test, y_test), callbacks=callbacks)
 # model = load_model("models/h5_models/{}.h5".format('live_tracksv17'))
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5

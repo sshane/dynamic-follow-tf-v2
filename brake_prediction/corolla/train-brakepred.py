@@ -3,7 +3,7 @@ import os
 import tensorflow as tf
 from keras.models import Sequential
 import keras
-from keras.layers import Dense, Dropout, LSTM, CuDNNLSTM, Activation, LeakyReLU, Flatten
+from keras.layers import Dense, Dropout, LSTM, CuDNNLSTM, Activation, LeakyReLU, Flatten, CuDNNGRU
 import numpy as np
 import random
 from normalizer_brakepred import normX
@@ -38,20 +38,35 @@ with open("data/{}/y_train".format(data_dir), "rb") as f:
 #     x_train_nobrake = pickle.load(f)
 # with open("data/live_tracks/y_train", "rb") as f:
 #     y_train_nobrake = np.array(pickle.load(f))
+# x_train, y_train = zip(*[i for i in zip(x_train, y_train) if i[1] <= 0])
+# x_train, y_train = np.array(x_train), np.array(y_train)
 
+x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if (y < 0 and x[0] > x[1]) or y >= 0 or x[0] > 2])
+x_train, y_train = map(np.array, [x_train, y_train])
+# for i in range(50):
+#     c = random.choice(range(len(x_train)))
+#     plt.clf()
+#     plt.plot(x_train[c])
+#     plt.title(y_train[c])
+#     plt.pause(0.01)
+#     input()
+# raise Exception
 
-print("Normalizing data...")
-x_train, scales = normX(x_train)
-#scales['gas'] = [min(y_train), max(y_train)]
+print("Normalizing data...", flush=True)
+x_train, v_ego_scale = normX(x_train)
 x_train = np.array(x_train)
 
-#y_train = np.interp(y_train, [-1, 1], [0, 1])
-y_train = np.round(y_train, 5)
+gas_scale = [-1, 1]  # [min(y_train), max(y_train)]
 
-with open("data/{}/scales".format(data_dir), "wb") as f:
-    pickle.dump(scales, f)
+y_train = np.interp(y_train, gas_scale, [0, 1])
+#y_train = np.round(y_train, 1)  # .reshape(-1, 1)
 
-x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.08)
+with open("data/{}/v_ego_scale".format(data_dir), "w") as f:
+    json.dump(v_ego_scale, f)
+
+x_train = np.array([seq.reshape(-1, 1) for seq in x_train])
+
+x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.10)
 
 opt = keras.optimizers.Adam()
 # opt = keras.optimizers.Adadelta(lr=.000375)
@@ -67,57 +82,77 @@ opt = keras.optimizers.Adam()
 layer_num = 5
 nodes = 64
 a_function = "relu"
-
-# model = Sequential()
-# model.add(Dense(256, activation=a_function, input_shape=(x_train.shape[1:])))
-#
-# for i in range(layer_num - 1):
-#     model.add(Dense(nodes, activation=a_function))
-# model.add(Dense(1, activation='linear'))
 model = Sequential()
-model.add(Dense(2+1, input_shape=(x_train.shape[1:])))
-model.add(Dense(512, activation=a_function))
-model.add(Dense(256, activation=a_function))
-model.add(Dense(128, activation=a_function))
-model.add(Dense(128, activation=a_function))
+model.add(Flatten())
+model.add(Dense(64, activation=a_function))
+model.add(Dense(32, activation=a_function))
+model.add(Dense(32, activation=a_function))
+
+#model.add(CuDNNLSTM(32))
+
+# model.add(Flatten())
+# model.add(Dense(256, activation=a_function))
+# model.add(Dense(120, activation=a_function))
+# model.add(Dense(120, activation=a_function))
+# model.add(Dense(120, activation=a_function))
+# model.add(Dense(120, activation=a_function))
 model.add(Dense(1))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=512, epochs=1000, validation_data=(x_test, y_test))
+model.fit(x_train, y_train, shuffle=True, batch_size=256, epochs=50, validation_data=(x_test, y_test))
 #model = load_model("models/h5_models/{}.h5".format(model_name))
 
 #x_train_all = x_train_all[20000:25000]
 #y_train_all = y_train_all[20000:25000]
 
-'''x = range(len(x_train_all))
-a = [[[[np.interp(i[0], scales['v_ego_scale'], [0, 1]), interp_fast(i[1], scales['a_ego_scale'], [0.5, 1])]]] for i in x_train_all]
-y = [model.predict(i)[0][0] for i in a]
-y2 = [i[1] for i in x_train_all]
-plt.clf()
-plt.plot(x, y, label='prediction')
-plt.plot(x, y2, label='a_ego')
-plt.plot(x, y_train_all, label='gas')
-plt.legend()
-plt.show()
+
+def find_best_model(min_nodes=8, max_nodes=1024, steps=5, epochs=5, batch_size=512):
+    acc_dict = {}
+    for i in range(steps):
+        nodes = round(interp_fast(i, [0, steps - 1], [min_nodes, max_nodes]))
+        print("\nTesting {} nodes!\n".format(nodes))
+        model = Sequential()
+        model.add(Flatten())
+        model.add(Dense(nodes, activation="relu"))
+        model.add(Dense(nodes, activation="relu"))
+        model.add(Dense(nodes, activation="relu"))
+        model.add(Dense(1))
+
+        model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
+        model.fit(x_train, y_train, shuffle=False, batch_size=batch_size, epochs=epochs, validation_data=(x_test, y_test), verbose=False)
+
+        preds = model.predict(x_test).reshape(1, -1)[0]
+        diffs = [abs(pred - ground) for pred, ground in zip(preds, y_test)]
+        acc = interp_fast(sum(diffs) / len(diffs), [0, .25], [1, 0], ext=True)
+        acc_dict[nodes] = acc
+
+    sorted_acc = sorted(acc_dict, key=acc_dict.get, reverse=True)
+    print("\n{}".format('\n'.join(["Nodes: {}, accuracy: {}%".format(nod, round(acc * 100, 5)) for nod, acc in zip(sorted_acc, [acc_dict[i] for i in sorted_acc])])))
+
+
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5
-'''
+
+preds = model.predict(x_test).reshape(1, -1)[0]
+diffs = [abs(pred - ground) for pred, ground in zip(preds, y_test)]
+
+print("Test accuracy: {}".format(interp_fast(sum(diffs) / len(diffs), [0, .25], [1, 0], ext=True)))
 
 
 '''x = [50-i for i in range(50)]
-y = [interp_fast(model.predict([[[interp_fast(i, scales['v_ego_scale']), interp_fast(-2, scales['a_ego_scale'])]]])[0][0], [0, 1], [-1, 1]) for i in x]
+y = [interp_fast(model.predict([[[interp_fast(i, scales['v_ego_scale']), interp_fast(-2, scales['a_ego_scale'])]]])[0][0], [0, 1], gas_scale) for i in x]
 plt.plot(x, y)
 plt.show()'''
 
 x = range(50)
 y = []
-y_true = []
-while len(y) != 50:
+ground = []
+while len(y) < 50:
     c = random.randrange(len(x_test))
     y.append(model.predict([[x_test[c]]])[0][0])
-    y_true.append(y_test[c])
-plt.plot(x,y, label='pred')
-plt.plot(x,y_true, label='ground')
+    ground.append(y_test[c])
+plt.plot(x, y, label='pred')
+plt.plot(x, ground, label='ground')
 plt.title('train data')
 plt.legend()
 plt.show()
@@ -137,12 +172,6 @@ plt.show()
 # plt.legend()
 # plt.show()
 
-preds = []
-for idx, i in enumerate(x_test):
-    preds.append(abs(model.predict([[i]])[0][0] - y_test[idx]))
-
-print("Test accuracy: {}".format(np.interp(sum(preds) / len(preds), [0, 1.0], [1, 0])))
-
 
 '''for c in np.where(y_test==.5)[0][:20]:
     #c = random.randint(0, len(x_test))
@@ -150,11 +179,11 @@ print("Test accuracy: {}".format(np.interp(sum(preds) / len(preds), [0, 1.0], [1
     print('Prediction: {}'.format(model.predict([[x_test[c]]])[0][0]))
     print()'''
 
-for i in range(20):
-    c = random.randint(0, len(x_test))
-    print('Ground truth: {}'.format(y_test[c]))
-    print('Prediction: {}'.format(model.predict([[x_test[c]]])[0][0]))
-    print()
+# for i in range(20):
+#     c = random.randint(0, len(x_test))
+#     print('Ground truth: {}'.format(y_test[c]))
+#     print('Prediction: {}'.format(model.predict([[x_test[c]]])[0][0]))
+#     print()
 
 
 '''showed = 0
@@ -164,11 +193,11 @@ while showed <= 20:
         showed+=1
         print('Ground truth: {}'.format(y_train_nobrake[c]))
         to_pred = [interp_fast(x_train_nobrake[c]['v_ego'], scales['v_ego_scale'], [0, 1]), interp_fast(x_train_nobrake[c]['a_ego'], scales['a_ego_scale'], [0, 1])]
-        print('Prediction: {}'.format(interp_fast(model.predict([[to_pred]])[0][0], [0, 1], [-1, 1])))
+        print('Prediction: {}'.format(interp_fast(model.predict([[to_pred]])[0][0], [0, 1], gas_scale)))
         print()'''
 
 
-save_model = True
+save_model = False
 tf_lite = False
 if save_model:
     model.save("models/h5_models/"+model_name+".h5")

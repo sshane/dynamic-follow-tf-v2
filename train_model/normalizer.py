@@ -50,8 +50,8 @@ def normX(samples, car_data):
                                     interp_fast(i[2], scales['steer_rate']),
                                     i[3],
                                     i[7],
-                                    i[8],
-                                    int(i[4]), int(i[5])])  # adds blinkers
+                                    i[8]])
+                                    #int(i[4]), int(i[5])])  # adds blinkers
 
     return tracks_normalized, car_data_normalized, scales
 

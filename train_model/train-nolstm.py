@@ -109,13 +109,18 @@ else:
     with open("data/{}/y_train".format(data_dir), "rb") as f:
         y_train = pickle.load(f)
 
-    remove_signals = False
-    if remove_signals:
-        x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if x['left_blinker'] or x['right_blinker']])  # filter samples with turn signals
+    remove_blinkers = True
+    if remove_blinkers:
+        x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if True not in [x['left_blinker'], x['right_blinker']]])  # filter samples with turn signals
+        x_train, y_train = map(list, [x_train, y_train])
+
+    only_leads = True
+    if only_leads:
+        x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if x['status']])
         x_train, y_train = map(list, [x_train, y_train])
 
     data_filter = "all"  # can be "gas", "brake", or "all" to do nothing
-    predict_brake = False
+    predict_brake = True
 
     if data_filter == "gas":
         print("Filtering out brake samples...")
@@ -129,13 +134,15 @@ else:
     # tracks = [[track for track in line['live_tracks']['tracks'] if abs(track['yRel']) < 4.45] for line in x_train]
     # tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego']) >= 0 and ((line['v_ego'] >= 8.9408 and track['vRel'] + line['v_ego'] > 2.2352) or (line['v_ego'] < 8.9408)) and abs(track['yRel']) < 4.45] for line in x_train]
 
-    tracks = [[track for track in line['live_tracks']['tracks'] if
-               # keep track if v_ego above 25 mph and track vel is above 5 mph OR if v_ego is less than 25 mph
-               ((line['v_ego'] >= 11.176 and track['vRel'] + line['v_ego'] > 2.2352) or
-                line['v_ego'] < 11.176)] for line in x_train]
+
+    # tracks = [[track for track in line['live_tracks']['tracks'] if
+    #            # keep track if v_ego above 25 mph and track vel is above 5 mph OR if v_ego is less than 25 mph
+    #            ((line['v_ego'] >= 11.176 and track['vRel'] + line['v_ego'] > 2.2352) or
+    #             line['v_ego'] < 11.176)] for line in x_train]
+
 
     # tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
-    # tracks = [line['live_tracks']['tracks'] for line in x_train]
+    tracks = [line['live_tracks']['tracks'] for line in x_train]
     
     # get relevant training car data to normalize
     car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status'], line['x_lead'], line['v_lead']] for line in x_train]
@@ -158,7 +165,7 @@ else:
         for idx, predicted_brake in enumerate(brake_preds):
             if predicted_brake < 0.0:
                 neg_preds += 1
-                y_train[brake_indices[idx]] = predicted_brake * 1.25
+                y_train[brake_indices[idx]] = predicted_brake * 1.275
             else:
                 pos_preds += 1
                 y_train[brake_indices[idx]] = -0.15
@@ -186,8 +193,9 @@ tracks_padded = [line if len(line) == scales['max_tracks'] else pad_tracks(line,
 flat_tracks = [[item for sublist in sample for item in sublist] for sample in tracks_padded]
 
 # combine into one list
-x_train = np.array([car_dat + fl_tr for car_dat, fl_tr in zip(car_data_normalized, flat_tracks)])
-#x_train = np.array(flat_tracks)
+#x_train = np.array([car_dat + fl_tr for car_dat, fl_tr in zip(car_data_normalized, flat_tracks)])
+
+x_train = np.array(car_data_normalized)  # todo; experiment with this
 
 #y_train = np.array([i if i >= 0 else 0.0 for i in y_train])  # pick some constant arbitrary negative value so we know when to warn user
 
@@ -242,7 +250,6 @@ a_function = "relu"
 
 model = Sequential()
 model.add(Dense(x_train.shape[1] + 1, activation=None, input_shape=(x_train.shape[1:])))
-model.add(Dense(512, activation=a_function))
 model.add(Dense(256, activation=a_function))
 model.add(Dense(256, activation=a_function))
 model.add(Dense(128, activation=a_function))

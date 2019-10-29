@@ -11,10 +11,11 @@ import time
 def interp_fast(x, xp, fp):  # extrapolates above range, np.interp does not
     return (((x - xp[0]) * (fp[1] - fp[0])) / (xp[1] - xp[0])) + fp[0]
 
+
 os.chdir("C:/Git/dynamic-follow-tf-v2/data")
 data_dir = "D:/Resilio Sync/dfv2"
 driving_data = []
-supported_users = ['l3VlZMd4IrYecnk-HOLDEN ASTRA RS-V BK 2017']  # ['ShaneSmiskol-TOYOTA COROLLA 2017'] #, 'i9NmzGB44XW8h86-TOYOTA COROLLA 2017']  #,]
+supported_users = ['ShaneSmiskol-TOYOTA COROLLA 2017']  # , 'i9NmzGB44XW8h86-TOYOTA COROLLA 2017']  #,]
 consider_set_speed = False  # removing set_speed for now
 use_pedal = False
 
@@ -84,7 +85,7 @@ for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
                 line['v_ego'] = max(line['v_ego'], 0.0)  # remove negative velocities
                 driving_data.append(line)
 
-even_out = False
+even_out = True
 if even_out:  # based on gas and brake
     gas = [i for i in driving_data if i['gas'] - i['brake'] > 0]
     brake = [i for i in driving_data if i['gas'] - i['brake'] < 0]
@@ -110,7 +111,7 @@ average_y = sum(average_y) / len(average_y)
 print('Average of samples: {}'.format(average_y))
 #plt.plot(range(len(driving_data)), [i['decel_for_model'] for i in driving_data])
 
-remove_keys = ['gas', 'brake', 'v_lat', 'car_gas', 'path_curvature', 'decel_for_model', 'a_rel', 'y_lead']  # remove these unneeded keys in training
+remove_keys = ['gas', 'brake', 'v_lat', 'car_gas', 'path_curvature', 'decel_for_model', 'a_rel']  # remove these unneeded keys in training
 save_data = True
 if save_data:
     print("Saving data...")

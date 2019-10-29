@@ -1,6 +1,7 @@
 import json
 import ast
 import os
+from tokenizer import tokenize
 import matplotlib.pyplot as plt
 import numpy as np
 import random
@@ -33,28 +34,54 @@ for folder in os.listdir(data_dir):
 
                 keys = data_parsed[0]
                 data = data_parsed[1:]
+                driving_data += [dict(zip(keys, i)) for i in data]
 
-                data = [dict(zip(keys, i)) for i in data]
-                for line in data:
-                    if line['brake'] >= 0 and line['gas'] == 0:
-                        driving_data.append(line)
 
+data_split = [[]]
+counter = 0
+for idx, line in enumerate(driving_data):
+    if idx > 0:
+        time_diff = line['time'] - driving_data[idx - 1]['time']
+        if abs(time_diff) > 0.1:
+            counter += 1
+            data_split.append([])
+    data_split[counter].append(line)
+
+avg_times = []
+for i in data_split:
+    for idx, x in enumerate(i):
+        if idx > 0:
+            avg_times.append(x['time'] - i[idx-1]['time'])
+# avg_time = sum(avg_times) / len(avg_times)
+# print("Average time: {}".format(round(avg_time, 5)))
+avg_time = 0.01  # openpilot runs longcontrol at 100hz, so this makes sense
+
+seq_time = .1
+seq_len = round(seq_time / avg_time)
+desired_seq_len = round(seq_time / 0.05)  # in 20 hertz form, what dftf data is gathered at
+data_sequences = []
+h100_to_20 = 5
+for seq in data_split:
+    if len(seq) >= seq_len:
+        for i in range(h100_to_20):  # lets us use all data, rather than throwing out 4/5 of it. like another layer of tokenization
+            # don't have to check seq[i:] is at least desired_seq_len, as tokenization return [] if it's too short, and nothing will be added
+            data_sequences += tokenize(seq[i:][::h100_to_20], desired_seq_len)  # converts to 20 hz, only use data every 5 samples
+
+x_train = np.array([[max(sample['v_ego'], 0) for sample in seq] for seq in data_sequences])
+y_train = np.array([seq[-1]['gas'] - seq[-1]['brake'] for seq in data_sequences])
 
 print("Total samples: {}".format(len(driving_data)))
-y_train = [line['brake'] for line in driving_data]
 
 average_y = [i for i in y_train]
 average_y = sum(average_y) / len(average_y)
 print('Average of samples: {}'.format(average_y))
 
-remove_keys = ['gas', 'brake', 'time']  # remove these unneeded keys in training
 save_data = True
 if save_data:
     print("Saving data...")
-    save_dir = "brake_pred-Corolla"
-    x_train = [{key: line[key] for key in line if key not in remove_keys} for line in driving_data]
-    with open(save_dir+"/x_train", "wb") as f:
+    save_dir = "brake_pred-Corolla/{}"
+    with open(save_dir.format("x_train"), "wb") as f:
         pickle.dump(np.array(x_train), f)
-    with open(save_dir+"/y_train", "wb") as f:
+    with open(save_dir.format("y_train"), "wb") as f:
         pickle.dump(np.array(y_train), f)
     print("Saved data!")

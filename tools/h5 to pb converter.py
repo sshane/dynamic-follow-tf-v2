@@ -37,8 +37,13 @@ def freeze_session(session, keep_var_names=None, output_names=None, clear_device
         return frozen_graph
 
 K.set_learning_phase(0)
-model_name = "live_tracksvNOLEAD"
-model = load_model("h5_models/"+model_name+".h5")
+model_name = "simple_model-epoch-5"
+
+use_keras = True
+if use_keras:
+    model = load_model("h5_models/"+model_name+".h5")
+else:
+    model = tf.keras.models.load_model("h5_models/" + model_name + ".h5")
 convert = True
 if convert:
     frozen_graph = freeze_session(K.get_session(),

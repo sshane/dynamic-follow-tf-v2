@@ -23,20 +23,16 @@ for folder in os.listdir(data_dir):
             if 'brake-data' in filename:
                 print(filename)
                 with open(os.path.join(os.path.join(data_dir, folder), filename), "r") as f:
-                    data = f.read().split("\n")
+                    data = f.read().replace("'", '"').split("\n")
 
-                data_parsed = []
-                for line in data:
-                    try:
-                        data_parsed.append(ast.literal_eval(line))
-                    except:
-                        continue
+                data.remove('')
+                data_parsed = json.loads('[{}]'.format(', '.join(data)))
 
                 keys = data_parsed[0]
                 data = data_parsed[1:]
                 driving_data += [dict(zip(keys, i)) for i in data]
 
-
+# raise Exception
 data_split = [[]]
 counter = 0
 for idx, line in enumerate(driving_data):
@@ -56,11 +52,11 @@ for i in data_split:
 # print("Average time: {}".format(round(avg_time, 5)))
 avg_time = 0.01  # openpilot runs longcontrol at 100hz, so this makes sense
 
-seq_time = .1
+seq_time = 0.5
 seq_len = round(seq_time / avg_time)
 desired_seq_len = round(seq_time / 0.05)  # in 20 hertz form, what dftf data is gathered at
 data_sequences = []
-h100_to_20 = 5
+h100_to_20 = int(.05 / .01)  # 5.0
 for seq in data_split:
     if len(seq) >= seq_len:
         for i in range(h100_to_20):  # lets us use all data, rather than throwing out 4/5 of it. like another layer of tokenization
@@ -68,7 +64,7 @@ for seq in data_split:
             data_sequences += tokenize(seq[i:][::h100_to_20], desired_seq_len)  # converts to 20 hz, only use data every 5 samples
 
 x_train = np.array([[max(sample['v_ego'], 0) for sample in seq] for seq in data_sequences])
-y_train = np.array([seq[-1]['gas'] - seq[-1]['brake'] for seq in data_sequences])
+y_train = np.array([seq[0]['gas'] - seq[0]['brake'] for seq in data_sequences])  # todo: try getting first gas value instead of last. gas in past affects future, not other way around!
 
 print("Total samples: {}".format(len(driving_data)))
 

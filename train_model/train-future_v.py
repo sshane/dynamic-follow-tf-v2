@@ -19,9 +19,7 @@ import functools
 import operator
 from keras.models import load_model
 import os
-import load_brake_pred_model as brake_wrapper
 
-brake_model, brake_scales = brake_wrapper.get_brake_pred_model()
 
 def interp_fast(x, xp, fp=[0, 1], ext=False):  # extrapolates above range when ext is True
     interped = (((x - xp[0]) * (fp[1] - fp[0])) / (xp[1] - xp[0])) + fp[0]
@@ -37,43 +35,6 @@ def pad_tracks(track, max_tracks):
     return (to_pad * to_add_left) + track + (to_pad * to_add_right)
 
 
-def split_data(driving_data):
-    average_sample_time = 0.05
-    seconds_in_future = 1.0
-    len_samples = round(seconds_in_future / average_sample_time)
-    data_split = [[]]
-    counter = 0
-    for idx, line in enumerate(driving_data):
-        if idx > 0:
-            time_diff = line['time'] - driving_data[idx-1]['time']
-            if abs(time_diff) > 0.5:
-                counter += 1
-                data_split.append([])
-        data_split[counter].append(line)
-
-    data_split = [i for i in data_split if len(i) > len_samples]  # 10 samples in future is .5 seconds on average
-    print(len(data_split))
-    future_velocity_samples = []
-    X = []
-    Y = []
-    for idi, section in enumerate(data_split):
-        for idx, sample in enumerate(section):
-            if idx < len(section) - len_samples:
-                X.append(sample)
-                Y.append(section[idx+len_samples]['v_ego'] - sample['v_ego'])
-
-
-    # avg_times = []
-    # for i in data_split:
-    #     for idx, x in enumerate(i):
-    #         if idx > 0:
-    #             avg_times.append(x['time'] - i[idx-1]['time'])
-    # print(sum(avg_times) / len(avg_times))  # average is .05 seconds
-
-    return X, Y
-    #raise Exception
-
-
 os.chdir("C:/Git/dynamic-follow-tf-v2")
 data_dir = "live_tracks"
 norm_dir = "data/{}/normalized"
@@ -83,10 +44,6 @@ try:
     shutil.rmtree("models/h5_models/{}".format(model_name))
 except:
     pass
-
-'''for idx, i in enumerate(x_train):
-    if y_train[idx] < 0.0:
-        y_train[idx] = -0.2'''
 
 
 if os.path.exists("data/{}/x_train_normalized".format(data_dir)):
@@ -99,30 +56,25 @@ else:
     print("Loading data...", flush=True)
     with open("data/{}/x_train".format(data_dir), "rb") as f:
         x_train = pickle.load(f)
-    # with open("data/{}/y_train".format(data_dir), "rb") as f:
-    #     y_train = pickle.load(f)
-
-    # print(len(x_train))
-    x_train, y_train = split_data(x_train)
-    # print(len(x_train))
-    # print(len(y_train))
+    with open("data/{}/y_train".format(data_dir), "rb") as f:
+        y_train = pickle.load(f)
 
     remove_signals = False
     if remove_signals:
         x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if x['left_blinker'] or x['right_blinker']])  # filter samples with turn signals
         x_train, y_train = map(list, [x_train, y_train])
 
-    #tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
+    # tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
     tracks = [line['live_tracks']['tracks'] for line in x_train]  # remove tracks under 3 mph if no lead and above 20 mph
     
     # get relevant training car data to normalize
-    car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status']] for line in x_train]
+    # car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status']] for line in x_train]
+    car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['lead_status'], line['x_lead'], line['v_lead']] for line in x_train]
     
     print("Normalizing data...", flush=True)  # normalizes track dicts into [yRel, dRel, vRel] lists for training
     tracks_normalized, car_data_normalized, scales = normX(tracks, car_data)  # normalizes data and adds blinkers
     scales['max_tracks'] = max([len(i) for i in tracks])  # max number of tracks in all samples
     scales['v_diff'] = [min(y_train), max(y_train)]
-    y_train = np.interp(y_train, scales['v_diff'], [0, 1])
 
     print('Dumping normalized data...', flush=True)
     with open("data/{}/x_train_normalized".format(data_dir), "wb") as f:
@@ -143,15 +95,9 @@ flat_tracks = [[item for sublist in sample for item in sublist] for sample in tr
 
 # combine into one list
 x_train = np.array([car_dat + fl_tr for car_dat, fl_tr in zip(car_data_normalized, flat_tracks)])
-#x_train = np.array(flat_tracks)
+# x_train = np.array(car_data_normalized)  # TODO: testing having no live tracks data
 
-#y_train = np.array([i if i >= 0 else 0.0 for i in y_train])  # pick some constant arbitrary negative value so we know when to warn user
-
-#y_train = np.array([interp_fast(i, [-1, 1], [0, 1]) for i in y_train])  # EXPERIMENT WITH THIS
-#y_train = np.array(y_train)
-
-# x_train_copy = np.array(x_train)
-# y_train_copy = np.array(y_train)
+y_train = np.interp(y_train, scales['v_diff'], [0, 1])
 
 
 x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.1)
@@ -193,14 +139,14 @@ a_function = "relu"
 model = Sequential()
 model.add(Dense(x_train.shape[1] + 1, activation=None, input_shape=(x_train.shape[1:])))
 #model.add(Dense(512, activation=a_function))
-model.add(Dense(512, activation=a_function))
 model.add(Dense(256, activation=a_function))
 model.add(Dense(256, activation=a_function))
+model.add(Dense(128, activation=a_function))
 model.add(Dense(128, activation=a_function))
 model.add(Dense(1, activation='linear'))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=256, epochs=5000, validation_data=(x_test, y_test))
+model.fit(x_train, y_train, shuffle=True, batch_size=128, epochs=5000, validation_data=(x_test, y_test))
 #model = load_model("models/h5_models/{}.h5".format('live_tracksv6'))
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5

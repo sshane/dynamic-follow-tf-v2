@@ -1,6 +1,7 @@
 import json
 import os
 import tensorflow as tf
+from keras.backend.tensorflow_backend import set_session
 from keras.models import Sequential
 import keras
 from keras.layers import Dense, Dropout, LSTM, CuDNNLSTM, Activation, LeakyReLU, Flatten, CuDNNGRU
@@ -16,11 +17,14 @@ import functools
 import operator
 from keras.models import load_model
 
+config = tf.ConfigProto()
+config.gpu_options.per_process_gpu_memory_fraction = .1
+set_session(tf.Session(config=config))
+
 
 def interp_fast(x, xp, fp=[0, 1], ext=False):  # extrapolates above range when ext is True
     interped = (((x - xp[0]) * (fp[1] - fp[0])) / (xp[1] - xp[0])) + fp[0]
     return interped if ext else min(max(min(fp), interped), max(fp))
-
 
 os.chdir("C:/Git/dynamic-follow-tf-v2")
 data_dir = "brake_pred-Corolla"
@@ -41,8 +45,9 @@ with open("data/{}/y_train".format(data_dir), "rb") as f:
 # x_train, y_train = zip(*[i for i in zip(x_train, y_train) if i[1] <= 0])
 # x_train, y_train = np.array(x_train), np.array(y_train)
 
-x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if (y < 0 and x[0] > x[1]) or y >= 0 or x[0] > 2])
-x_train, y_train = map(np.array, [x_train, y_train])
+# x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if (y < 0 and x[0] > x[1]) or y >= 0 or x[0] > 2])
+# x_train, y_train = map(np.array, [x_train, y_train])
+
 # for i in range(50):
 #     c = random.choice(range(len(x_train)))
 #     plt.clf()
@@ -52,29 +57,33 @@ x_train, y_train = map(np.array, [x_train, y_train])
 #     input()
 # raise Exception
 
+x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if y <= 0.0])  # keep only brake or coast samples
+x_train, y_train = map(np.array, [x_train, y_train])
+
 print("Normalizing data...", flush=True)
 x_train, v_ego_scale = normX(x_train)
 x_train = np.array(x_train)
 
-gas_scale = [-1, 1]  # [min(y_train), max(y_train)]
+gas_scale = [min(y_train), max(y_train)]
 
 y_train = np.interp(y_train, gas_scale, [0, 1])
-#y_train = np.round(y_train, 1)  # .reshape(-1, 1)
 
-with open("data/{}/v_ego_scale".format(data_dir), "w") as f:
-    json.dump(v_ego_scale, f)
+with open("data/{}/scales".format(data_dir), "w") as f:
+    json.dump({'v_ego': v_ego_scale, 'gas': gas_scale}, f)
 
-x_train = np.array([seq.reshape(-1, 1) for seq in x_train])
+use_dense = True
+if not use_dense:
+    x_train = np.array([seq.reshape(-1, 1) for seq in x_train])
 
-x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.10)
+x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.1)
 
-opt = keras.optimizers.Adam()
+#opt = keras.optimizers.Adam()
 # opt = keras.optimizers.Adadelta(lr=.000375)
-# opt = keras.optimizers.SGD(lr=0.008, momentum=0.9)
+#opt = keras.optimizers.SGD(lr=0.01, momentum=0.9)
 # opt = keras.optimizers.RMSprop(lr=0.00005)#, decay=1e-5)
 # opt = keras.optimizers.Adagrad(lr=0.00025)
 # opt = keras.optimizers.Adagrad()
-# opt = 'adam'
+opt = 'adam'
 
 # opt = 'rmsprop'
 # opt = keras.optimizers.Adadelta()
@@ -83,23 +92,25 @@ layer_num = 5
 nodes = 64
 a_function = "relu"
 model = Sequential()
-model.add(Flatten())
-model.add(Dense(64, activation=a_function))
-model.add(Dense(32, activation=a_function))
-model.add(Dense(32, activation=a_function))
-
-#model.add(CuDNNLSTM(32))
-
-# model.add(Flatten())
-# model.add(Dense(256, activation=a_function))
-# model.add(Dense(120, activation=a_function))
-# model.add(Dense(120, activation=a_function))
-# model.add(Dense(120, activation=a_function))
-# model.add(Dense(120, activation=a_function))
+if use_dense:
+    model.add(Dense(len(x_train[0]) + 1, input_shape=x_train.shape[1:]))
+    model.add(Dense(128, activation=a_function))
+    model.add(Dense(64, activation=a_function))
+    model.add(Dense(64, activation=a_function))
+else:
+    model.add(CuDNNGRU(64, return_sequences=True))
+    model.add(CuDNNGRU(32, return_sequences=True))
+    model.add(CuDNNGRU(16))
 model.add(Dense(1))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-model.fit(x_train, y_train, shuffle=True, batch_size=256, epochs=50, validation_data=(x_test, y_test))
+
+model.fit(x_train,
+          y_train,
+          shuffle=True,
+          batch_size=64,
+          epochs=1000,
+          validation_data=(x_test, y_test))
 #model = load_model("models/h5_models/{}.h5".format(model_name))
 
 #x_train_all = x_train_all[20000:25000]
@@ -136,7 +147,7 @@ def find_best_model(min_nodes=8, max_nodes=1024, steps=5, epochs=5, batch_size=5
 preds = model.predict(x_test).reshape(1, -1)[0]
 diffs = [abs(pred - ground) for pred, ground in zip(preds, y_test)]
 
-print("Test accuracy: {}".format(interp_fast(sum(diffs) / len(diffs), [0, .25], [1, 0], ext=True)))
+print("Test accuracy: {}".format(interp_fast(sum(diffs) / len(diffs), [0, 1], [1, 0], ext=True)))
 
 
 '''x = [50-i for i in range(50)]
@@ -173,11 +184,10 @@ plt.show()
 # plt.show()
 
 
-'''for c in np.where(y_test==.5)[0][:20]:
-    #c = random.randint(0, len(x_test))
+for c in np.where(y_test < .5)[0][:20]:
     print('Ground truth: {}'.format(y_test[c]))
     print('Prediction: {}'.format(model.predict([[x_test[c]]])[0][0]))
-    print()'''
+    print()
 
 # for i in range(20):
 #     c = random.randint(0, len(x_test))
@@ -197,7 +207,7 @@ while showed <= 20:
         print()'''
 
 
-save_model = False
+save_model = True
 tf_lite = False
 if save_model:
     model.save("models/h5_models/"+model_name+".h5")

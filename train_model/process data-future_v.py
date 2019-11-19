@@ -16,12 +16,12 @@ def interp_fast(x, xp, fp):  # extrapolates above range, np.interp does not
 os.chdir("C:/Git/dynamic-follow-tf-v2/data")
 data_dir = "D:/Resilio Sync/dfv2"
 driving_data = []
-supported_users = ['ShaneSmiskol-TOYOTA COROLLA 2017']  # , 'i9NmzGB44XW8h86-TOYOTA COROLLA 2017']  #,]
+supported_users = ['all']  # ['ShaneSmiskol-TOYOTA COROLLA 2017']  # , 'i9NmzGB44XW8h86-TOYOTA COROLLA 2017']  #,]
 consider_set_speed = False  # removing set_speed for now
 use_pedal = False
 
 print("Loading data...")
-for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
+for folder in [i for i in os.listdir(data_dir) if i not in supported_users]:
     for filename in os.listdir(os.path.join(data_dir, folder)):
         if 'df-data' in filename:
             file_path = os.path.join(os.path.join(data_dir, folder), filename)
@@ -41,8 +41,7 @@ for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
             if new_format:
                 keys = data[0]  # gets keys and removes keys from data
                 if len(keys) != len(data[1]):
-                    print('Length of keys not equal to length of data')
-                    raise Exception
+                    raise Exception('Length of keys not equal to length of data!')
                 if 'track_data' in keys:
                     keys[keys.index('track_data')] = 'live_tracks'
                 if 'status' in keys:
@@ -101,7 +100,7 @@ save_data = True
 if save_data:
     print("Saving data...")
     save_dir = "live_tracks"
-    x_train = [{key: line[key] for key in sample if key not in remove_keys} for sample in x_train]  # remove gas/brake from x_train
+    x_train = [{key: sample[key] for key in sample if key not in remove_keys} for sample in x_train]  # remove gas/brake from x_train
     with open(save_dir+"/x_train", "wb") as f:
         pickle.dump(x_train, f)
     with open(save_dir+"/y_train", "wb") as f:

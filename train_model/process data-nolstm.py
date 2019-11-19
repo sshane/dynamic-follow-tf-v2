@@ -7,20 +7,29 @@ import random
 import pickle
 import csv
 import time
+import copy
+from tokenizer import tokenize
+import load_brake_pred_model_corolla as brake_wrapper
+
+brake_model, brake_scales = brake_wrapper.get_brake_pred_model()
 
 def interp_fast(x, xp, fp):  # extrapolates above range, np.interp does not
     return (((x - xp[0]) * (fp[1] - fp[0])) / (xp[1] - xp[0])) + fp[0]
 
 
 os.chdir("C:/Git/dynamic-follow-tf-v2/data")
-data_dir = "D:/Resilio Sync/dfv2"
+old_data = False
+if old_data:
+    data_dir = "D:/Resilio Sync/df"
+else:
+    data_dir = "D:/Resilio Sync/dfv2"
+data_folders = ["D:/Resilio Sync/df", "D:/Resilio Sync/dfv2"]
 driving_data = []
-supported_users = ['ShaneSmiskol-TOYOTA COROLLA 2017']  # , 'i9NmzGB44XW8h86-TOYOTA COROLLA 2017']  #,]
+supported_users = ['HOLDEN ASTRA']  # , 'i9NmzGB44XW8h86-TOYOTA COROLLA 2017']  #,]
 consider_set_speed = False  # removing set_speed for now
-use_pedal = False
 
 print("Loading data...")
-for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
+for folder in [i for i in os.listdir(data_dir) if any([x in i for x in supported_users])]:
     for filename in os.listdir(os.path.join(data_dir, folder)):
         if 'old' not in filename and '.txt' not in filename and 'df-data' in filename:
             file_path = os.path.join(os.path.join(data_dir, folder), filename)
@@ -37,46 +46,35 @@ for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
 
             new_format = type(data[0]) == list  # new space saving format, this will convert it to list of dicts
             if new_format:
-                keys = data[0]  # gets keys and removes keys from data
-                if len(keys) != len(data[1]):
-                    print('Length of keys not equal to length of data')
-                    raise Exception
-                if 'track_data' in keys:
-                    keys[keys.index('track_data')] = 'live_tracks'
-                if 'lead_status' in keys:
-                    keys[keys.index('lead_status')] = 'status'
-                if 'time.time()' in keys:
-                    keys[keys.index('time.time()')] = 'time'
-                data = data[1:]
-                data = [dict(zip(keys, i)) for i in data]
+                if not old_data:
+                    keys = data[0]  # gets keys and removes keys from data
+                    if len(keys) != len(data[1]):
+                        print('Length of keys not equal to length of data')
+                        raise Exception
+                    if 'track_data' in keys:
+                        keys[keys.index('track_data')] = 'live_tracks'
+                    if 'status' in keys:
+                        keys[keys.index('status')] = 'lead_status'
+                    if 'time.time()' in keys:
+                        keys[keys.index('time.time()')] = 'time'
+                    data = data[1:]
+                    data = [dict(zip(keys, i)) for i in data]
+                else:
+                    if len(data[0]) != 9:
+                        print(file_path)
+                        print(data[0])
+                        print(len(data[0]))
+                        raise Exception
+                    keys = ['v_ego', 'a_ego', 'v_lead', 'x_lead', 'a_lead', 'a_rel', 'gas', 'brake', 'time']
+                    data = [dict(zip(keys, i)) for i in data]
             else:
                 raise Exception("Error. Not new format!")
-            
-            #pedal = any([True if i['car_gas'] > 0.0 else False for i in data])
-            #if pedal:
-            if use_pedal:
-                pedal_gas = [line['gas'] for line in data]  # data from comma pedal
-                car_gas = [line['car_gas'] for line in data]  # data from car's can
-
-                max_car_gas = max(car_gas)  # this is most accurate way to map pedal gas to car gas range (0 to 1)
-                max_pedal_gas = pedal_gas[car_gas.index(max_car_gas)]  # comma pedal has more resolution than car's sensor
-
-                min_car_gas = [i for i in car_gas if i > 0.0][0]
-                min_pedal_gas = pedal_gas[car_gas.index(min_car_gas)]
-
-                pedal_gas = [interp_fast(i, [min_pedal_gas, max_pedal_gas], [min_car_gas, max_car_gas]) for i in pedal_gas]
-                pedal_gas = [i if i >= 0 else 0 for i in pedal_gas]
-            #else:
-                #print('Not pedal!')
 
             for line in data:  # map gas and brake values to appropriate 0 to 1 range and append to driving_data
                 if consider_set_speed and (line['set_speed'] == 0.0 or (line['set_speed'] > line['v_ego'] and line['car_gas'] > .15)):
                     continue
-                if use_pedal:
-                    new_gas = (interp_fast(line['gas'], [min_pedal_gas, max_pedal_gas], [min_car_gas, max_car_gas]) * 0.4) + (line['car_gas'] * 0.6)  # makes it so that it's closer to the car's gas sensor while still preserving some extra accuracy (noise?) from pedal sensor
-                    new_gas = new_gas if new_gas >= 0 and line['car_gas'] != 0 else 0  # if remapped gas is negative, no gas
-                    line.update({'gas': new_gas})
-                elif 'HOLDEN' not in folder:
+
+                if 'HOLDEN' not in folder:
                     line['gas'] = float(line['car_gas'])
 
                 if 'HOLDEN' not in folder:
@@ -85,23 +83,79 @@ for folder in [i for i in os.listdir(data_dir) if i in supported_users]:
                 line['v_ego'] = max(line['v_ego'], 0.0)  # remove negative velocities
                 driving_data.append(line)
 
-even_out = True
-if even_out:  # based on gas and brake
-    gas = [i for i in driving_data if i['gas'] - i['brake'] > 0]
-    brake = [i for i in driving_data if i['gas'] - i['brake'] < 0]
-    coast = [i for i in driving_data if i['gas'] - i['brake'] == 0]
+if not old_data:
+    data_split = [[]]
+    counter = 0
+    for idx, line in enumerate(driving_data):
+        if idx > 0:
+            time_diff = line['time'] - driving_data[idx - 1]['time']
+            if abs(time_diff) > 0.1:
+                counter += 1
+                data_split.append([])
+        data_split[counter].append(line)
 
-    if len(gas) > len(brake):
-        print('Reducing gas length from {} to {}.'.format(len(gas), len(brake)))
-        gas = random.sample(gas, len(brake))
-    elif len(brake) > len(gas):
-        print('Reducing brake length from {} to {}.'.format(len(brake), len(gas)))
-        brake = random.sample(brake, len(gas))
+    avg_times = []
+    for i in data_split:
+        for idx, x in enumerate(i):
+            if idx > 0:
+                avg_times.append(x['time'] - i[idx - 1]['time'])
+    avg_time = sum(avg_times) / len(avg_times)
+    print("Average time: {}".format(round(avg_time, 5)))
 
-    driving_data = gas + brake + coast
+    seq_time = 0.5
+    seq_len = round(seq_time / avg_time)
 
-print("Total samples: {}".format(len(driving_data)))
-y_train = [line['gas'] - line['brake'] for line in driving_data]
+    data_sequences = []
+    for seq in data_split:
+        data_sequences += tokenize(seq, seq_len)
+
+    print("Predicting brake samples...", flush=True)
+    x_train = []
+    y_train = []
+    count = 0
+    pos_preds = 0
+    neg_preds = 0
+    for idx, seq in enumerate(data_sequences):
+        if count > len(data_sequences) / 10:
+            print("{}% samples predicted!".format(round(idx/len(data_sequences), 2)))
+            count = 0
+        x_train.append(seq[0])
+        if seq[0]['gas'] - seq[0]['brake'] < 0:  # only predict y_train if not coasting or accelerating
+            to_pred = np.interp(np.array([sample['v_ego'] for sample in seq]), brake_scales['v_ego'], [0, 1])
+            predicted_brake = np.interp(brake_model.predict([[to_pred]])[0][0], [0, 1], brake_scales['gas'])
+            if predicted_brake <= 0:
+                neg_preds += 1
+            else:
+                pos_preds += 1
+                predicted_brake = -0.2
+            y_train.append(predicted_brake)
+        else:
+            y_train.append(seq[0]['gas'])  # we can assume gas is activated, or if it's not, then we're coasting
+        count += 1
+    print('Of {} predictions, {} were incorrectly positive while {} were correctly negative.'.format(pos_preds + neg_preds,
+                                                                                                     pos_preds, neg_preds))
+
+# even_out = False
+# if even_out:  # based on gas and brake
+#     gas = [i for i in driving_data if i['gas'] - i['brake'] > 0]
+#     brake = [i for i in driving_data if i['gas'] - i['brake'] < 0]
+#     coast = [i for i in driving_data if i['gas'] - i['brake'] == 0]
+#
+#     if len(gas) > len(brake):
+#         print('Reducing gas length from {} to {}.'.format(len(gas), len(brake)))
+#         gas = random.sample(gas, len(brake))
+#     elif len(brake) > len(gas):
+#         print('Reducing brake length from {} to {}.'.format(len(brake), len(gas)))
+#         brake = random.sample(brake, len(gas))
+#
+#     driving_data = gas + brake + coast
+
+x_train = [{'v_ego': sample['v_ego'], 'v_lead': sample['v_lead'], 'a_ego': sample['a_ego'], 'x_lead': sample['x_lead'],
+            'a_lead': sample['a_lead']} for sample in driving_data]
+
+y_train = [i['gas'] - i['brake'] for i in driving_data]
+
+print("Total samples: {}".format(len(y_train)))
 print("Gas samples: {}".format(len([i for i in y_train if i > 0])))
 print("Coast samples: {}".format(len([i for i in y_train if i == 0])))
 print("Brake samples: {}".format(len([i for i in y_train if i < 0])))
@@ -116,7 +170,8 @@ save_data = True
 if save_data:
     print("Saving data...")
     save_dir = "live_tracks"
-    x_train = [{key: line[key] for key in line if key not in remove_keys} for line in driving_data]  # remove gas/brake from x_train
+    if not old_data:
+        x_train = [{key: line[key] for key in line if key not in remove_keys} for line in x_train]  # remove gas/brake from x_train
     with open(save_dir+"/x_train", "wb") as f:
         pickle.dump(x_train, f)
     with open(save_dir+"/y_train", "wb") as f:

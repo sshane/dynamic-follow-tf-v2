@@ -19,7 +19,9 @@ import functools
 import operator
 from keras.models import load_model
 import os
-import load_brake_pred_model as brake_wrapper
+import load_brake_pred_model_corolla as brake_wrapper
+from keras.callbacks.tensorboard_v1 import TensorBoard
+
 
 brake_model, brake_scales = brake_wrapper.get_brake_pred_model()
 
@@ -27,15 +29,6 @@ brake_model, brake_scales = brake_wrapper.get_brake_pred_model()
 def interp_fast(x, xp, fp=[0, 1], ext=False):  # extrapolates above range when ext is True
     interped = (((x - xp[0]) * (fp[1] - fp[0])) / (xp[1] - xp[0])) + fp[0]
     return interped if ext else min(max(min(fp), interped), max(fp))
-
-
-def pad_tracks(tracks, max_tracks):
-    to_add = max_tracks - len(tracks)
-    to_add_left = to_add - (to_add // 2)
-    to_add_right = to_add - to_add_left
-    to_pad = [[0, 0, 0]]
-    #return tracks + (to_add * to_pad)
-    return (to_pad * to_add_left) + tracks + (to_pad * to_add_right)
 
 
 os.chdir("C:/Git/dynamic-follow-tf-v2")
@@ -51,17 +44,13 @@ except:
 
 def feature_importance():
     # input_num = x_train.shape[1] - len(car_data[0])
-    #inputs = ['v_ego', 'steer_angle', 'steer_rate', 'a_lead', 'left_blinker', 'right_blinker', 'live_tracks']
-    inputs = ['v_ego', 'steer_angle', 'live_tracks']
+    inputs = ['v_ego', 'v_lead', 'x_lead', 'a_lead']
     base = np.zeros(x_train.shape[1])
     base = model.predict([[base]])[0][0]
     preds = {}
     for idx, i in enumerate(inputs):
         a = np.zeros(x_train.shape[1])
-        if i != 'live_tracks':
-            np.put(a, idx, 1)
-        else:
-            np.put(a, range(len(inputs) + 1, x_train.shape[1]), 1)
+        np.put(a, idx, 1)
         preds[i] = abs(model.predict([[a]])[0][0] - base)
 
     plt.figure(2)
@@ -93,13 +82,15 @@ def show_coast(to_display=200):
 
 class Visualize(keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs={}):
-        #feature_importance()
-        show_coast()
+        # feature_importance()
+        # show_coast()
+        pass
+
 
 if os.path.exists("data/{}/x_train_normalized".format(data_dir)):
     print('Loading normalized data...', flush=True)
     with open("data/{}/x_train_normalized".format(data_dir), "rb") as f:
-        tracks_normalized, car_data_normalized, scales = pickle.load(f)
+        car_data_normalized, scales = pickle.load(f)
     with open("data/{}/y_train_normalized".format(data_dir), "rb") as f:
         y_train = pickle.load(f)
 else:
@@ -109,18 +100,18 @@ else:
     with open("data/{}/y_train".format(data_dir), "rb") as f:
         y_train = pickle.load(f)
 
-    remove_blinkers = True
+    remove_blinkers = False
     if remove_blinkers:
         x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if True not in [x['left_blinker'], x['right_blinker']]])  # filter samples with turn signals
         x_train, y_train = map(list, [x_train, y_train])
 
-    only_leads = True
+    only_leads = False
     if only_leads:
-        x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if x['status']])
+        x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if x['lead_status']])
         x_train, y_train = map(list, [x_train, y_train])
 
     data_filter = "all"  # can be "gas", "brake", or "all" to do nothing
-    predict_brake = True
+    predict_brake = False
 
     if data_filter == "gas":
         print("Filtering out brake samples...")
@@ -131,26 +122,10 @@ else:
         x_train, y_train = zip(*[[x, y] for x, y in zip(x_train, y_train) if y <= 0.0])  # keep only brake or coast samples
         x_train, y_train = map(list, [x_train, y_train])
 
-    # tracks = [[track for track in line['live_tracks']['tracks'] if abs(track['yRel']) < 4.45] for line in x_train]
-    # tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego']) >= 0 and ((line['v_ego'] >= 8.9408 and track['vRel'] + line['v_ego'] > 2.2352) or (line['v_ego'] < 8.9408)) and abs(track['yRel']) < 4.45] for line in x_train]
-
-
-    # tracks = [[track for track in line['live_tracks']['tracks'] if
-    #            # keep track if v_ego above 25 mph and track vel is above 5 mph OR if v_ego is less than 25 mph
-    #            ((line['v_ego'] >= 11.176 and track['vRel'] + line['v_ego'] > 2.2352) or
-    #             line['v_ego'] < 11.176)] for line in x_train]
-
-
-    # tracks = [[track for track in line['live_tracks']['tracks'] if (track['vRel'] + line['v_ego'] > 1.34112) or (line['status'] and line['v_ego'] < 8.9408) or (line['v_ego'] < 8.9408)] for line in x_train] # remove tracks under 3 mph if no lead and above 20 mph
-    tracks = [line['live_tracks']['tracks'] for line in x_train]
-    
-    # get relevant training car data to normalize
-    car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status'], line['x_lead'], line['v_lead']] for line in x_train]
-    # car_data = [[line['v_ego'], line['steer_angle'], line['steer_rate'], line['a_lead'], line['left_blinker'], line['right_blinker'], line['status']] for line in x_train]
+    model_inputs = ['v_ego', 'v_lead', 'x_lead', 'a_lead']
     
     print("Normalizing data...", flush=True)  # normalizes track dicts into [yRel, dRel, vRel trackStatus (0/1)] lists for training
-    tracks_normalized, car_data_normalized, scales = normX(tracks, car_data)  # normalizes data and adds blinkers
-    scales['max_tracks'] = max([len(i) for i in tracks])  # max number of tracks in all samples
+    car_data_normalized, scales = normX(x_train, model_inputs)  # normalizes data and adds blinkers
 
     if data_filter in ["brake", "all"] and predict_brake:
         print("Predicting brake samples...", flush=True)
@@ -159,8 +134,7 @@ else:
         #brake_preds = []
         brake_indices = [idx for idx, y_sample in enumerate(y_train) if y_sample < 0.0]
         brake_samples = [x_train[idx] for idx in brake_indices]
-        to_pred = [[interp_fast(i['v_ego'], brake_scales['v_ego_scale']),
-                    interp_fast(i['a_ego'], brake_scales['a_ego_scale'])] for i in brake_samples]
+        to_pred = [[interp_fast(i['v_ego'], brake_scales['v_ego_scale']), interp_fast(i['a_ego'], brake_scales['a_ego_scale'])] for i in brake_samples]
         brake_preds = brake_model.predict([to_pred]).reshape(1, -1)[0]
         for idx, predicted_brake in enumerate(brake_preds):
             if predicted_brake < 0.0:
@@ -177,40 +151,17 @@ else:
 
     print('Dumping normalized data...', flush=True)
     with open("data/{}/x_train_normalized".format(data_dir), "wb") as f:
-        pickle.dump([tracks_normalized, car_data_normalized, scales], f)
+        pickle.dump([car_data_normalized, scales], f)
     with open("data/{}/y_train_normalized".format(data_dir), "wb") as f:
         pickle.dump(y_train, f)
 
-#print(''+1)
-#Format data
-print("Sorting tracks...")
-tracks_sorted = [sorted(line, key=lambda track: track[0]) for line in tracks_normalized]  # sort tracks by yRel
+x_train = np.array(car_data_normalized)
 
-# pad tracks to max_tracks length so the shape is correct for training (keeps data in center of pad)
-tracks_padded = [line if len(line) == scales['max_tracks'] else pad_tracks(line, scales['max_tracks']) for line in tracks_sorted]  # tracks_sorted
 
-# flatten tracks to 1d array
-flat_tracks = [[item for sublist in sample for item in sublist] for sample in tracks_padded]
+scales['gas'] = [min(y_train), max(y_train)]
+# y_train = np.interp(y_train, scales['gas'], [0, 1])
+y_train = np.interp(y_train, [-1, 1], [0, 1])  # this is the best performing model architecture
 
-# combine into one list
-#x_train = np.array([car_dat + fl_tr for car_dat, fl_tr in zip(car_data_normalized, flat_tracks)])
-
-x_train = np.array(car_data_normalized)  # todo; experiment with this
-
-#y_train = np.array([i if i >= 0 else 0.0 for i in y_train])  # pick some constant arbitrary negative value so we know when to warn user
-
-#y_train = np.array([interp_fast(i, [-1, 1], [0, 1]) for i in y_train])  # EXPERIMENT WITH THIS
-#y_train = np.array(y_train)
-
-x_train_copy = np.array(x_train)
-y_train_copy = np.array(y_train)
-
-y_train = np.array([interp_fast(i, [-1, 1], [0, 1]) for i in y_train])  # this is the best performing model architecture
-
-'''
-x_train = np.array(x_train_copy)
-y_train = np.array(y_train_copy)
-'''
 
 x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.1)
 print(x_train.shape)
@@ -252,16 +203,24 @@ model = Sequential()
 model.add(Dense(x_train.shape[1] + 1, activation=None, input_shape=(x_train.shape[1:])))
 model.add(Dense(256, activation=a_function))
 model.add(Dense(256, activation=a_function))
-model.add(Dense(128, activation=a_function))
-model.add(Dense(128, activation=a_function))
+model.add(Dense(64, activation=a_function))
+model.add(Dense(32, activation=a_function))
 # for i in range(layer_num):
 #     model.add(Dense(nodes, activation=a_function))
 model.add(Dense(1, activation='linear'))
 
 model.compile(loss='mean_squared_error', optimizer=opt, metrics=['mae'])
-callbacks = [Visualize()]
-model.fit(x_train, y_train, shuffle=True, batch_size=512, epochs=5000, validation_data=(x_test, y_test), callbacks=callbacks)
-# model = load_model("models/h5_models/{}.h5".format('live_tracksv17'))
+
+tensorboard = TensorBoard(log_dir="C:/Git/dynamic-follow-tf-v2/train_model/logs/{}".format("final model"))
+callbacks = [tensorboard]
+model.fit(x_train, y_train,
+          shuffle=True,
+          batch_size=256,
+          epochs=10000,
+          validation_data=(x_test, y_test))
+          # callbacks=callbacks)
+
+# model = load_model("models/h5_models/{}.h5".format('live_tracksvHOLDENONLYLEADS'))
 
 #print("Gas/brake spread: {}".format(sum([model.predict([[[random.uniform(0,1) for i in range(4)]]])[0][0] for i in range(10000)])/10000)) # should be as close as possible to 0.5
 
@@ -376,13 +335,26 @@ for i in range(20):
     print('Prediction: {}'.format(model.predict([[x_test[c]]])[0][0]))
     print()
 
-'''for c in np.where(y_test==0.5)[0][:20]:
+for c in np.where(y_test==0.5)[0][:20]:
     #c = random.randint(0, len(x_test))
     print('Ground truth: {}'.format(interp_fast(y_test[c], [0, 1], [-1, 1])))
     print('Prediction: {}'.format(interp_fast(model.predict([[x_test[c]]])[0][0], [0, 1], [-1, 1])))
     print()
 
-for c in np.where(y_test>0.5)[0][:20]:
+
+def coast_test():
+    coast_samples = np.where(y_test == 0.5)[0]
+    coast_predictions = model.predict(x_test[(coast_samples)])
+    num_invalid = 0
+    for i in coast_predictions:
+        if abs((i[0] - 0.5) * 2.0 >= .02):
+            num_invalid += 1
+    print('Out of {} samples, {} predictions were invalid (above 0.01 threshold)'.format(len(coast_samples), num_invalid))
+    print('Percentage: {}'.format(1 - num_invalid / len(coast_samples)))
+
+
+
+'''for c in np.where(y_test>0.5)[0][:20]:
     #c = random.randint(0, len(x_test))
     print('Ground truth: {}'.format(interp_fast(y_test[c], [0, 1], [-1, 1])))
     print('Prediction: {}'.format(interp_fast(model.predict([[x_test[c]]])[0][0], [0, 1], [-1, 1])))

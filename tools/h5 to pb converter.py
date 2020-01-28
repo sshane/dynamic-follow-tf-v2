@@ -37,9 +37,9 @@ def freeze_session(session, keep_var_names=None, output_names=None, clear_device
         return frozen_graph
 
 K.set_learning_phase(0)
-model_name = "simple_model-epoch-5"
+model_name = "Gerritymodel"
 
-use_keras = True
+use_keras = False
 if use_keras:
     model = load_model("h5_models/"+model_name+".h5")
 else:
